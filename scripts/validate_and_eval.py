@@ -107,24 +107,31 @@ def validate_index(store) -> dict:
     logger.info("Collection '%s' has %d documents", COLLECTION_NAME, doc_count)
     results["stats"]["total_documents"] = doc_count
 
-    # 3. Fetch ALL metadata for comprehensive stats (batch if large)
+    # 3. Fetch ALL metadata for comprehensive stats (batch to avoid SQL variable limit)
     # Initialize source_counter before conditional block (needed for check #12)
     source_counter: Counter = Counter()
-    
+    BATCH_SIZE = 5000
+    ids: list = []
+    metadatas: list = []
+    documents: list = []
     try:
-        all_data = collection.get(
-            include=["metadatas", "documents"],
-            limit=doc_count,
-        )
+        for offset in range(0, doc_count, BATCH_SIZE):
+            batch = collection.get(
+                include=["metadatas", "documents"],
+                limit=BATCH_SIZE,
+                offset=offset,
+            )
+            if batch and batch.get("ids"):
+                ids.extend(batch["ids"])
+                metadatas.extend(batch.get("metadatas") or [])
+                documents.extend(batch.get("documents") or [])
+        all_data = {"ids": ids, "metadatas": metadatas, "documents": documents} if ids else None
     except Exception as e:
         _check("bulk_metadata_fetch", False, str(e))
         _warn(f"Could not fetch all metadata: {e}")
         all_data = None
 
     if all_data and all_data.get("ids"):
-        ids = all_data["ids"]
-        metadatas = all_data.get("metadatas") or []
-        documents = all_data.get("documents") or []
         _check("bulk_metadata_fetch", True, f"fetched {len(ids)} docs")
 
         # 4. Metadata completeness
@@ -263,9 +270,11 @@ def validate_index(store) -> dict:
         sample_embedding = collection.get(
             limit=1, include=["embeddings"]
         )
-        if sample_embedding and sample_embedding.get("embeddings"):
-            emb = sample_embedding["embeddings"][0]
-            dim = len(emb) if emb else 0
+        # Don't use "if embeddings" - numpy array truth value is ambiguous
+        embs = sample_embedding.get("embeddings") if sample_embedding else None
+        if embs is not None and len(embs) > 0:
+            emb = embs[0]
+            dim = int(getattr(emb, "size", len(emb)) if emb is not None else 0)
             results["stats"]["embedding_dimension"] = dim
             _check("embedding_dimension", dim > 0, f"dim={dim}")
             logger.info("Embedding dimension: %d", dim)
