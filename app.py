@@ -180,11 +180,18 @@ def _build_metadata_filter(
     """Build a Chroma where-clause dict from sidebar selections."""
     parts: dict[str, str] = {}
     if source_filter and source_filter != "All":
-        parts["source"] = source_filter
+        # Convert back to lowercase since ChromaDB stores lowercase source values
+        parts["source"] = source_filter.lower()
     if manual_filter and manual_filter != "All":
         parts["manual"] = manual_filter
     if jurisdiction_filter and jurisdiction_filter != "All":
         parts["jurisdiction"] = jurisdiction_filter
+    
+    # ChromaDB requires exactly one key in a where-clause dict.
+    # If we have multiple filters, wrap them in $and operator.
+    if len(parts) > 1:
+        return {"$and": [{k: v} for k, v in parts.items()]}
+    
     return parts or None
 
 
