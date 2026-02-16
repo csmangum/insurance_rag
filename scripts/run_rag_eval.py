@@ -72,6 +72,7 @@ def main() -> int:
         return 0
 
     from medicare_rag.config import CHROMA_DIR, COLLECTION_NAME, DATA_DIR
+    from medicare_rag.index import get_embeddings, get_or_create_chroma
     from medicare_rag.query.retriever import get_retriever
 
     out_path = args.out if args.out is not None else DATA_DIR / "rag_eval_report.md"
@@ -81,13 +82,14 @@ def main() -> int:
         return 1
 
     try:
-        retriever = get_retriever(k=args.k)
-        store_count = retriever._vectorstore._collection.count()
-        if store_count == 0:
+        embeddings = get_embeddings()
+        store = get_or_create_chroma(embeddings)
+        if store._collection.count() == 0:
             logger.error("Collection %s is empty. Run ingestion first.", COLLECTION_NAME)
             return 1
+        retriever = get_retriever(k=args.k)
     except Exception as e:
-        logger.error("Failed to load retriever: %s", e)
+        logger.error("Failed to load index/retriever: %s", e)
         return 1
 
     lines = [
