@@ -109,14 +109,17 @@ def _extract_pdf_page_unstructured(pdf_path: Path, page_num: int) -> str:
 
 def _extract_iom_pdf(pdf_path: Path, manual_id: str, chapter: str | None) -> str:
     parts = []
+    num_pages = 0
     with pdfplumber.open(pdf_path) as pdf:
+        num_pages = len(pdf.pages)
         for page in pdf.pages:
             text = (page.extract_text() or "").strip()
             if text:
                 parts.append(text)
     result = "\n\n".join(parts)
-    # If pdfplumber got very little (e.g. scanned/image PDF), try unstructured once
-    if not parts or (len(result) / len(parts)) < _PDF_MIN_CHARS_PER_PAGE:
+    # If pdfplumber got nothing or very little (e.g. scanned/image PDF), try unstructured once
+    chars_per_page = len(result) / max(1, num_pages)
+    if not result.strip() or chars_per_page < _PDF_MIN_CHARS_PER_PAGE:
         fallback = _extract_pdf_page_unstructured(pdf_path, 0)
         if len(fallback) > len(result):
             result = fallback
@@ -150,6 +153,9 @@ def extract_iom(processed_dir: Path, raw_dir: Path, *, force: bool = False) -> l
             except Exception as e:
                 logger.warning("Extract failed for %s: %s", pdf_path, e)
                 continue
+            if not text.strip():
+                logger.warning("No text recovered for %s; skipping", pdf_path)
+                continue
             meta = _meta_schema(
                 source="iom",
                 manual=manual_id,
@@ -175,13 +181,16 @@ def _html_to_text(html: str) -> str:
     return soup.get_text(separator="\n", strip=True)
 
 
-def _discover_html_columns(row: dict[str, str]) -> list[str]:
-    """Columns that look like HTML (contain tags)."""
-    out = []
-    for k, v in row.items():
-        if v and ("<" in v and ">" in v):
-            out.append(k)
-    return out
+def _cell_to_text(k: str, v: str) -> str | None:
+    """Return plain text for a cell: strip HTML if present, else return 'k: v' for short values."""
+    if not v:
+        return None
+    s = str(v)
+    if "<" in s and ">" in s:
+        return _html_to_text(s)
+    if len(s) < 500:
+        return f"{k}: {v}"
+    return None
 
 
 def _extract_mcd_zip(mcd_dir: Path, inner_zip_path: Path, subdir_name: str) -> list[Path]:
@@ -228,48 +237,47 @@ def extract_mcd(processed_dir: Path, raw_dir: Path, *, force: bool = False) -> l
             try:
                 with open(csv_path, newline="", encoding="utf-8", errors="replace") as f:
                     reader = csv.DictReader(f)
-                    rows = list(reader)
-                if not rows:
-                    continue
-                html_cols = _discover_html_columns(rows[0])
-                id_col_actual = id_col if id_col in (rows[0].keys() if rows else []) else None
-                if not id_col_actual and rows[0]:
-                    id_col_actual = next((c for c in rows[0] if "id" in c.lower() and "lcd" in c.lower()), None) or next(
-                        (c for c in rows[0] if "id" in c.lower()), None
-                    )
-                for i, row in enumerate(rows):
-                    doc_id = row.get(id_col_actual or "", str(i)).strip() or f"row{i}"
-                    doc_id = re.sub(r"[^\w\-]", "_", doc_id)
-                    out_txt = processed_dir / "mcd" / out_sub / f"{doc_id}.txt"
-                    out_meta = processed_dir / "mcd" / out_sub / f"{doc_id}.meta.json"
-                    if not force and out_txt.exists() and out_meta.exists():
-                        written.append((out_txt, out_meta))
-                        continue
-                    text_parts = []
-                    for col in html_cols:
-                        val = row.get(col, "")
-                        if val:
-                            text_parts.append(_html_to_text(val))
-                    for k, v in row.items():
-                        if k not in html_cols and v and len(str(v)) < 500 and "<" not in str(v):
-                            text_parts.append(f"{k}: {v}")
-                    text = "\n\n".join(text_parts).strip()
-                    if not text:
-                        continue
-                    meta = _meta_schema(
-                        source="mcd",
-                        manual=None,
-                        chapter=None,
-                        title=row.get("Title") or row.get("LCDTitle") or row.get("ArticleTitle"),
-                        effective_date=row.get("Effective_Date") or row.get("EffectiveDate"),
-                        source_url=row.get("URL"),
-                        jurisdiction=row.get("Jurisdiction") or row.get("Contractor"),
-                        doc_id=f"mcd_{out_sub}_{doc_id}",
-                        **{id_meta_key: doc_id},
-                    )
-                    txt_path, meta_path = _write_doc(processed_dir, f"mcd/{out_sub}", doc_id, text, meta)
-                    written.append((txt_path, meta_path))
-                logger.info("MCD %s: wrote %d docs from %s", out_sub, len(rows), csv_path.name)
+                    fieldnames = list(reader.fieldnames or [])
+                    id_col_actual = id_col if id_col in fieldnames else None
+                    if not id_col_actual and fieldnames:
+                        id_col_actual = (
+                            next((c for c in fieldnames if "id" in c.lower() and "lcd" in c.lower()), None)
+                            or next((c for c in fieldnames if "id" in c.lower()), None)
+                        )
+                    count = 0
+                    for i, row in enumerate(reader):
+                        doc_id = row.get(id_col_actual or "", str(i)).strip() or f"row{i}"
+                        doc_id = re.sub(r"[^\w\-]", "_", doc_id)
+                        out_txt = processed_dir / "mcd" / out_sub / f"{doc_id}.txt"
+                        out_meta = processed_dir / "mcd" / out_sub / f"{doc_id}.meta.json"
+                        if not force and out_txt.exists() and out_meta.exists():
+                            written.append((out_txt, out_meta))
+                            count += 1
+                            continue
+                        text_parts = []
+                        for k, v in row.items():
+                            part = _cell_to_text(k, v)
+                            if part:
+                                text_parts.append(part)
+                        text = "\n\n".join(text_parts).strip()
+                        if not text:
+                            continue
+                        meta = _meta_schema(
+                            source="mcd",
+                            manual=None,
+                            chapter=None,
+                            title=row.get("Title") or row.get("LCDTitle") or row.get("ArticleTitle"),
+                            effective_date=row.get("Effective_Date") or row.get("EffectiveDate"),
+                            source_url=row.get("URL"),
+                            jurisdiction=row.get("Jurisdiction") or row.get("Contractor"),
+                            doc_id=f"mcd_{out_sub}_{doc_id}",
+                            **{id_meta_key: doc_id},
+                        )
+                        txt_path, meta_path = _write_doc(processed_dir, f"mcd/{out_sub}", doc_id, text, meta)
+                        written.append((txt_path, meta_path))
+                        count += 1
+                if count:
+                    logger.info("MCD %s: wrote %d docs from %s", out_sub, count, csv_path.name)
             except Exception as e:
                 logger.warning("MCD CSV %s: %s", csv_path, e)
     return written
@@ -383,6 +391,16 @@ def extract_hcpcs(processed_dir: Path, raw_dir: Path, *, force: bool = False) ->
 
 # --- ICD-10-CM (optional XML) ---
 
+
+def _first_child(elem, *names: str):
+    """First direct child matching any of the given tag names (avoids element truth-value)."""
+    for name in names:
+        child = elem.find(name)
+        if child is not None:
+            return child
+    return None
+
+
 def extract_icd10cm(processed_dir: Path, raw_dir: Path, *, force: bool = False) -> list[tuple[Path, Path]]:
     """If ICD-10-CM ZIP exists, extract and parse XML for code-description pairs."""
     icd_dir = raw_dir / "codes" / "icd10-cm"
@@ -391,43 +409,51 @@ def extract_icd10cm(processed_dir: Path, raw_dir: Path, *, force: bool = False) 
     written: list[tuple[Path, Path]] = []
     for zip_path in icd_dir.glob("*.zip"):
         try:
+            import xml.etree.ElementTree as ET
+            root = None
             with zipfile.ZipFile(zip_path, "r") as zf:
                 xml_names = [n for n in zf.namelist() if n.lower().endswith(".xml") and "tabular" in n.lower()]
                 if not xml_names:
                     xml_names = [n for n in zf.namelist() if n.lower().endswith(".xml")]
+                if not xml_names:
+                    logger.warning("ICD-10-CM %s: no XML files found in archive", zip_path)
+                    continue
                 for xml_name in xml_names[:1]:
                     with zf.open(xml_name) as f:
-                        import xml.etree.ElementTree as ET
                         root = ET.parse(f).getroot()
-                    # Common CDC structure: diag/diagCode or similar
-                    for elem in root.iter():
-                        code = elem.find("code") or elem.find("codeValue") or elem.find("code_value")
-                        desc = elem.find("desc") or elem.find("description") or elem.find("shortDescription")
-                        if code is not None and desc is not None and code.text:
-                            code_val = (code.text or "").strip()
-                            desc_val = (desc.text or "").strip()
-                            if not code_val:
-                                continue
-                            doc_id = re.sub(r"[^\w\-.]", "_", code_val)
-                            out_txt = processed_dir / "codes" / "icd10cm" / f"{doc_id}.txt"
-                            out_meta = processed_dir / "codes" / "icd10cm" / f"{doc_id}.meta.json"
-                            if not force and out_txt.exists() and out_meta.exists():
-                                written.append((out_txt, out_meta))
-                                continue
-                            content = f"Code: {code_val}\n\nDescription: {desc_val}"
-                            meta = _meta_schema(
-                                source="codes",
-                                manual=None,
-                                chapter=None,
-                                title=desc_val[:200] if desc_val else None,
-                                effective_date=None,
-                                source_url=None,
-                                jurisdiction=None,
-                                doc_id=f"icd10cm_{code_val}",
-                                icd10_code=code_val,
-                            )
-                            txt_path, meta_path = _write_doc(processed_dir, "codes/icd10cm", doc_id, content, meta)
-                            written.append((txt_path, meta_path))
+                    break
+            if root is None:
+                logger.warning("ICD-10-CM %s: failed to parse XML root element", zip_path)
+                continue
+            # Common CDC structure: diag/diagCode or similar
+            for elem in root.iter():
+                code = _first_child(elem, "code", "codeValue", "code_value")
+                desc = _first_child(elem, "desc", "description", "shortDescription")
+                if code is not None and desc is not None and (code.text or "").strip():
+                    code_val = (code.text or "").strip()
+                    desc_val = (desc.text or "").strip()
+                    if not code_val:
+                        continue
+                    doc_id = re.sub(r"[^\w\-.]", "_", code_val)
+                    out_txt = processed_dir / "codes" / "icd10cm" / f"{doc_id}.txt"
+                    out_meta = processed_dir / "codes" / "icd10cm" / f"{doc_id}.meta.json"
+                    if not force and out_txt.exists() and out_meta.exists():
+                        written.append((out_txt, out_meta))
+                        continue
+                    content = f"Code: {code_val}\n\nDescription: {desc_val}"
+                    meta = _meta_schema(
+                        source="codes",
+                        manual=None,
+                        chapter=None,
+                        title=desc_val[:200] if desc_val else None,
+                        effective_date=None,
+                        source_url=None,
+                        jurisdiction=None,
+                        doc_id=f"icd10cm_{code_val}",
+                        icd10_code=code_val,
+                    )
+                    txt_path, meta_path = _write_doc(processed_dir, "codes/icd10cm", doc_id, content, meta)
+                    written.append((txt_path, meta_path))
         except Exception as e:
             logger.warning("ICD-10-CM %s: %s", zip_path, e)
     return written

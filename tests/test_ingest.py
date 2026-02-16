@@ -14,6 +14,7 @@ from medicare_rag.ingest.extract import (
     _parse_hcpcs_line,
     extract_all,
     extract_hcpcs,
+    extract_icd10cm,
     extract_iom,
     extract_mcd,
 )
@@ -207,6 +208,46 @@ def test_extract_all_respects_source(tmp_path: Path) -> None:
     (raw / "codes" / "hcpcs" / "x" / "HCPC_x.txt").write_text(line)
     written = extract_all(processed, raw, source="codes", force=True)
     assert len(written) >= 1
+
+
+# --- ICD-10-CM extraction (ZIP + XML) ---
+
+
+@pytest.fixture
+def tmp_icd10cm_raw(tmp_path: Path) -> Path:
+    """Minimal ICD-10-CM ZIP with one tabular-style XML for code/description pairs."""
+    icd_dir = tmp_path / "raw" / "codes" / "icd10-cm"
+    icd_dir.mkdir(parents=True)
+    zip_path = icd_dir / "icd10cm_sample.zip"
+    # Minimal XML: root with elements that have <code> and <desc> (or description) children
+    xml_content = """<?xml version="1.0"?>
+<root>
+  <row><code>A00.0</code><desc>Cholera due to Vibrio cholerae 01, biovar cholerae</desc></row>
+  <row><code>A00.1</code><description>Cholera due to Vibrio cholerae 01, biovar el tor</description></row>
+</root>
+"""
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("tabular.xml", xml_content.encode("utf-8"))
+    return tmp_path / "raw"
+
+
+def test_extract_icd10cm_writes_txt_and_meta(tmp_icd10cm_raw: Path, tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    written = extract_icd10cm(processed, tmp_icd10cm_raw, force=True)
+    assert len(written) >= 2
+    by_code = {}
+    for txt_path, meta_path in written:
+        assert txt_path.exists()
+        assert meta_path.exists()
+        text = txt_path.read_text()
+        assert "Code:" in text and "Description:" in text
+        meta = __import__("json").loads(meta_path.read_text())
+        assert meta["source"] == "codes"
+        assert "icd10_code" in meta
+        by_code[meta["icd10_code"]] = (text, meta)
+    assert "A00.0" in by_code
+    assert "A00.1" in by_code
+    assert "Cholera" in by_code["A00.0"][0]
 
 
 # --- Chunking ---

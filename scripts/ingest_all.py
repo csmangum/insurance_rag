@@ -47,7 +47,7 @@ def main() -> int:
     try:
         if not args.skip_extract:
             written = extract_all(processed_dir, raw_dir, source=args.source, force=args.force)
-            logger.info("Extraction: %d documents written", len(written))
+            logger.info("Extraction: %d documents available", len(written))
         else:
             logger.info("Skipping extraction (--skip-extract)")
 

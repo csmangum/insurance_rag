@@ -16,11 +16,13 @@ dependencies = [
     "pdfplumber",
     "python-dotenv",
     "pytest",
-    "unstructured",
 ]
 
 [project.optional-dependencies]
 dev = ["ruff"]
+# Optional: enables PDF fallback for scanned/image PDFs when pdfplumber yields little text.
+# Without it, those PDFs may yield empty or short extractions.
+unstructured = ["unstructured"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
