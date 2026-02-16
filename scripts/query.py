@@ -28,7 +28,7 @@ def _check_index_has_docs() -> bool:
         return False
 
 
-def _main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Medicare RAG query REPL")
     parser.add_argument(
         "--filter-source", type=str, help="Filter by source (e.g. iom, mcd, codes)"
@@ -59,21 +59,21 @@ def _main() -> None:
             "Error: OPENROUTER_API_KEY is not set. Set it in the environment or .env.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return 1
 
     if not CHROMA_DIR.exists():
         print(
             f"Error: Chroma index not found at {CHROMA_DIR}. Run ingestion first (scripts/ingest_all.py).",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return 1
 
     if not _check_index_has_docs():
         print(
             f"Error: Collection {COLLECTION_NAME} is empty. Run ingestion first (scripts/ingest_all.py).",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return 1
 
     print("Medicare RAG query (blank line to quit)")
     print("---")
@@ -104,12 +104,13 @@ def _main() -> None:
             parts = [f"  [{i}]"]
             for key in SOURCE_META_KEYS:
                 if key in meta and meta[key] is not None:
-                    parts.append(f"  {key}={meta[key]}")
+                    parts.append(f"{key}={meta[key]}")
             print(" ".join(parts))
         print("---")
 
     print("Bye.")
+    return 0
 
 
 if __name__ == "__main__":
-    _main()
+    sys.exit(main())

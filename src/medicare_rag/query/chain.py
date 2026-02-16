@@ -1,5 +1,5 @@
 """RAG chain with OpenRouter (Phase 4)."""
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
@@ -32,9 +32,13 @@ def _format_context(docs: list[Document]) -> str:
 
 
 def _create_llm() -> ChatOpenAI:
+    if not OPENROUTER_API_KEY:
+        raise ValueError(
+            "OPENROUTER_API_KEY is not set. Please configure it before using the RAG chain."
+        )
     return ChatOpenAI(
         base_url=OPENROUTER_BASE_URL,
-        api_key=OPENROUTER_API_KEY or "dummy",
+        api_key=OPENROUTER_API_KEY,
         model=OPENROUTER_MODEL,
     )
 
@@ -43,7 +47,7 @@ def build_rag_chain(
     retriever: Any = None,
     k: int = 8,
     metadata_filter: dict | None = None,
-):
+) -> Callable[[dict], dict]:
     """Build an LCEL RAG chain. Returns a runnable that takes {"question": str} and returns {"answer": str, "source_documents": list[Document]}."""
     if retriever is None:
         retriever = get_retriever(k=k, metadata_filter=metadata_filter)

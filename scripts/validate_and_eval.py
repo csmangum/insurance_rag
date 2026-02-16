@@ -11,6 +11,7 @@ Usage:
   python scripts/validate_and_eval.py --validate-only
   python scripts/validate_and_eval.py --eval-only
   python scripts/validate_and_eval.py --eval-only -k 10
+  python scripts/validate_and_eval.py --eval-only --filter-source iom
   python scripts/validate_and_eval.py --json       # machine-readable metrics
 """
 import argparse
