@@ -9,10 +9,14 @@ description = "Medicare RAG POC: RAG system for Medicare RCM questions"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "httpx",
-    "python-dotenv",
     "beautifulsoup4",
+    "httpx",
+    "langchain-core",
+    "langchain-text-splitters",
+    "pdfplumber",
+    "python-dotenv",
     "pytest",
+    "unstructured",
 ]
 
 [project.optional-dependencies]
