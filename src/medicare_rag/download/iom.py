@@ -1,12 +1,13 @@
 """IOM (Internet-Only Manuals) download: 100-02, 100-03, 100-04 chapter PDFs."""
 import logging
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
 
 from medicare_rag.download._manifest import file_sha256, write_manifest
+from medicare_rag.download._utils import sanitize_filename_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,9 @@ def download_iom(raw_dir: Path, *, force: bool = False) -> None:
             manual_dir.mkdir(parents=True, exist_ok=True)
 
             for pdf_url in pdf_links:
-                name = urlparse(pdf_url).path.split("/")[-1] or "document.pdf"
+                name = sanitize_filename_from_url(pdf_url, "document.pdf")
+                if not name.lower().endswith(".pdf"):
+                    name += ".pdf"
                 dest = manual_dir / name
                 if dest.exists() and not force:
                     logger.debug("Skipping (exists): %s", dest)
@@ -68,9 +71,12 @@ def download_iom(raw_dir: Path, *, force: bool = False) -> None:
                     continue
 
                 logger.info("Downloading %s -> %s", pdf_url, dest)
-                r = client.get(pdf_url)
-                r.raise_for_status()
-                dest.write_bytes(r.content)
+                with client.stream("GET", pdf_url) as r:
+                    r.raise_for_status()
+                    with dest.open("wb") as f:
+                        for chunk in r.iter_bytes():
+                            if chunk:
+                                f.write(chunk)
                 try:
                     h = file_sha256(dest)
                 except OSError:

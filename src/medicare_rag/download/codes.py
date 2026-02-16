@@ -1,7 +1,6 @@
 """Code files download: ICD-10-CM and HCPCS."""
 import logging
 import os
-import re
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -9,6 +8,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from medicare_rag.download._manifest import file_sha256, write_manifest
+from medicare_rag.download._utils import sanitize_filename_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +45,7 @@ def download_codes(raw_dir: Path, *, force: bool = False) -> None:
         if not zip_url:
             logger.warning("Could not find latest HCPCS ZIP link on %s", HCPCS_QUARTERLY_URL)
         else:
-            # Use last segment of URL as filename, or a safe default
-            name = zip_url.rstrip("/").split("/")[-1].split("?")[0] or "hcpcs.zip"
+            name = sanitize_filename_from_url(zip_url, "hcpcs.zip")
             if not name.lower().endswith(".zip"):
                 name += ".zip"
             dest = hcpcs_dir / name
@@ -58,9 +57,12 @@ def download_codes(raw_dir: Path, *, force: bool = False) -> None:
                     files_with_hashes.append((dest, None))
             else:
                 logger.info("Downloading HCPCS %s -> %s", zip_url, dest)
-                r = client.get(zip_url)
-                r.raise_for_status()
-                dest.write_bytes(r.content)
+                with client.stream("GET", zip_url) as r:
+                    r.raise_for_status()
+                    with dest.open("wb") as f:
+                        for chunk in r.iter_bytes():
+                            if chunk:
+                                f.write(chunk)
                 try:
                     files_with_hashes.append((dest, file_sha256(dest)))
                 except OSError:
@@ -71,7 +73,7 @@ def download_codes(raw_dir: Path, *, force: bool = False) -> None:
         if icd_url:
             icd_dir = out_base / "icd10-cm"
             icd_dir.mkdir(parents=True, exist_ok=True)
-            name = icd_url.rstrip("/").split("/")[-1].split("?")[0] or "icd10cm.zip"
+            name = sanitize_filename_from_url(icd_url, "icd10cm.zip")
             if not name.lower().endswith(".zip"):
                 name += ".zip"
             dest = icd_dir / name
@@ -83,9 +85,12 @@ def download_codes(raw_dir: Path, *, force: bool = False) -> None:
                     files_with_hashes.append((dest, None))
             else:
                 logger.info("Downloading ICD-10-CM %s -> %s", icd_url, dest)
-                r = client.get(icd_url)
-                r.raise_for_status()
-                dest.write_bytes(r.content)
+                with client.stream("GET", icd_url) as r:
+                    r.raise_for_status()
+                    with dest.open("wb") as f:
+                        for chunk in r.iter_bytes():
+                            if chunk:
+                                f.write(chunk)
                 try:
                     files_with_hashes.append((dest, file_sha256(dest)))
                 except OSError:

@@ -14,6 +14,21 @@ MCD_ALL_DATA_URL = "https://downloads.cms.gov/medicare-coverage-database/downloa
 DEFAULT_TIMEOUT = 60.0
 
 
+def _safe_extract_zip(zf: zipfile.ZipFile, out_dir: Path) -> list[str]:
+    """Extract zip entries, validating paths to prevent zip slip. Returns list of extracted entry names."""
+    out_dir_resolved = out_dir.resolve()
+    names = []
+    for info in zf.infolist():
+        # Resolve path and ensure it stays under out_dir
+        target = (out_dir / info.filename).resolve()
+        if not target.is_relative_to(out_dir_resolved):
+            logger.warning("Skipping zip slip attempt: %s", info.filename)
+            continue
+        zf.extract(info, out_dir)
+        names.append(info.filename)
+    return names
+
+
 def download_mcd(raw_dir: Path, *, force: bool = False) -> None:
     """Download MCD 'Download All Data' ZIP and extract to raw_dir/mcd/."""
     out_dir = raw_dir / "mcd"
@@ -24,19 +39,20 @@ def download_mcd(raw_dir: Path, *, force: bool = False) -> None:
         return
 
     logger.info("Downloading %s", MCD_ALL_DATA_URL)
-    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
-        response = client.get(MCD_ALL_DATA_URL)
-        response.raise_for_status()
-
-        with NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-            tmp.write(response.content)
-            tmp_path = Path(tmp.name)
-
+    tmp_path: Path | None = None
     try:
+        with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+            with client.stream("GET", MCD_ALL_DATA_URL) as response:
+                response.raise_for_status()
+                with NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+                    for chunk in response.iter_bytes():
+                        if chunk:
+                            tmp.write(chunk)
+                    tmp_path = Path(tmp.name)
+
         out_dir.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(tmp_path, "r") as zf:
-            zf.extractall(out_dir)
-            names = zf.namelist()
+            names = _safe_extract_zip(zf, out_dir)
         logger.info("Extracted %d entries to %s", len(names), out_dir)
 
         files_with_hashes: list[tuple[Path, str | None]] = []
@@ -57,4 +73,5 @@ def download_mcd(raw_dir: Path, *, force: bool = False) -> None:
         )
         logger.info("Wrote manifest to %s", manifest_path)
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)

@@ -4,6 +4,8 @@ import argparse
 import logging
 import sys
 
+import httpx
+
 from medicare_rag.config import RAW_DIR
 from medicare_rag.download import download_codes, download_iom, download_mcd
 
@@ -49,6 +51,15 @@ def main() -> int:
             download_codes(raw_dir, force=args.force)
     except NotImplementedError as e:
         logger.error("%s", e)
+        return 1
+    except httpx.HTTPError as e:
+        logger.error("HTTP error during download: %s", e)
+        return 1
+    except OSError as e:
+        logger.error("File or I/O error during download: %s", e)
+        return 1
+    except Exception as e:
+        logger.exception("Unexpected error during download: %s", e)
         return 1
     return 0
 

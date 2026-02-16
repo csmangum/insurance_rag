@@ -42,14 +42,17 @@ def test_manifest_write_and_file_sha256(tmp_path: Path) -> None:
 
 def test_mcd_download(tmp_raw: Path) -> None:
     zip_content = _minimal_zip_bytes()
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.content = zip_content
-    mock_response.raise_for_status = MagicMock()
+    mock_stream_response = MagicMock()
+    mock_stream_response.raise_for_status = MagicMock()
+    mock_stream_response.iter_bytes = MagicMock(return_value=iter([zip_content]))
+
+    mock_stream_cm = MagicMock()
+    mock_stream_cm.__enter__ = MagicMock(return_value=mock_stream_response)
+    mock_stream_cm.__exit__ = MagicMock(return_value=False)
 
     with patch("medicare_rag.download.mcd.httpx") as mock_httpx:
         mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
+        mock_client.stream.return_value = mock_stream_cm
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_httpx.Client.return_value = mock_client
@@ -70,26 +73,28 @@ def test_mcd_idempotency_skips_when_manifest_exists(tmp_raw: Path) -> None:
     (tmp_raw / "mcd").mkdir(parents=True)
     (tmp_raw / "mcd" / "manifest.json").write_text('{"source_url": "x", "files": []}')
 
-    get_calls: list = []
+    stream_calls: list = []
 
-    def track_get(url, **kwargs):
-        get_calls.append(url)
+    def track_stream(method, url, **kwargs):
+        stream_calls.append(url)
         r = MagicMock()
-        r.status_code = 200
-        r.content = _minimal_zip_bytes()
         r.raise_for_status = MagicMock()
-        return r
+        r.iter_bytes = MagicMock(return_value=iter([_minimal_zip_bytes()]))
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=r)
+        cm.__exit__ = MagicMock(return_value=False)
+        return cm
 
     with patch("medicare_rag.download.mcd.httpx") as mock_httpx:
         mock_client = MagicMock()
-        mock_client.get.side_effect = track_get
+        mock_client.stream.side_effect = track_stream
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_httpx.Client.return_value = mock_client
 
         download_mcd(tmp_raw, force=False)
 
-    assert len(get_calls) == 0, "Should not download when manifest exists without --force"
+    assert len(stream_calls) == 0, "Should not download when manifest exists without --force"
 
 
 def test_iom_download_discovers_pdfs_and_writes_manifest(tmp_raw: Path) -> None:
@@ -117,15 +122,22 @@ def test_iom_download_discovers_pdfs_and_writes_manifest(tmp_raw: Path) -> None:
         if "internet-only-manuals" in url and "ioms" in url:
             r.text = index_html
             return r
-        if ".pdf" in url:
-            r.content = pdf_content
-            return r
         r.text = ""
         return r
+
+    def fake_stream(method, url, **kwargs):
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        r.iter_bytes = MagicMock(return_value=iter([pdf_content]))
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=r)
+        cm.__exit__ = MagicMock(return_value=False)
+        return cm
 
     with patch("medicare_rag.download.iom.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.get.side_effect = fake_get
+        mock_client.stream.side_effect = fake_stream
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_httpx.Client.return_value = mock_client
@@ -157,16 +169,23 @@ def test_codes_download_hcpcs_and_manifest(tmp_raw: Path) -> None:
         if "quarterly-update" in url:
             r.text = hcpcs_html
             return r
-        if "hcpcs" in url.lower() and "zip" in url.lower():
-            r.content = zip_content
-            return r
         r.text = ""
         r.content = b""
         return r
 
+    def fake_stream(method, url, **kwargs):
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        r.iter_bytes = MagicMock(return_value=iter([zip_content]))
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=r)
+        cm.__exit__ = MagicMock(return_value=False)
+        return cm
+
     with patch("medicare_rag.download.codes.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.get.side_effect = fake_get
+        mock_client.stream.side_effect = fake_stream
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_httpx.Client.return_value = mock_client
@@ -192,10 +211,9 @@ def test_codes_idempotency_skips_existing_file(tmp_raw: Path) -> None:
     <a href="/files/zip/january-2026-alpha-numeric-hcpcs-file.zip">January 2026 Alpha-Numeric HCPCS File (ZIP)</a>
     </body></html>
     """
-    get_calls: list = []
+    stream_calls: list = []
 
     def track_get(url, **kwargs):
-        get_calls.append(url)
         r = MagicMock()
         r.raise_for_status = MagicMock()
         if "quarterly-update" in url:
@@ -204,9 +222,20 @@ def test_codes_idempotency_skips_existing_file(tmp_raw: Path) -> None:
         r.content = _minimal_zip_bytes()
         return r
 
+    def track_stream(method, url, **kwargs):
+        stream_calls.append(url)
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        r.iter_bytes = MagicMock(return_value=iter([_minimal_zip_bytes()]))
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=r)
+        cm.__exit__ = MagicMock(return_value=False)
+        return cm
+
     with patch("medicare_rag.download.codes.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.get.side_effect = track_get
+        mock_client.stream.side_effect = track_stream
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_httpx.Client.return_value = mock_client
@@ -214,5 +243,4 @@ def test_codes_idempotency_skips_existing_file(tmp_raw: Path) -> None:
         download_codes(tmp_raw, force=False)
 
     # Should have called only the page URL to discover link, not the ZIP URL (because file exists)
-    zip_downloads = [u for u in get_calls if "zip" in u.lower() and "hcpcs" in u.lower()]
-    assert len(zip_downloads) == 0, "Should not re-download HCPCS ZIP when file exists without --force"
+    assert len(stream_calls) == 0, "Should not re-download HCPCS ZIP when file exists without --force"
