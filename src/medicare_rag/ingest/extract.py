@@ -8,8 +8,10 @@ import json
 import logging
 import re
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Literal
+from xml.etree.ElementTree import Element
 
 import pdfplumber
 from bs4 import BeautifulSoup
@@ -87,12 +89,12 @@ def _iom_chapter_from_path(manual_id: str, rel_path: Path) -> str | None:
     return None
 
 
-def _extract_pdf_page_unstructured(pdf_path: Path, page_num: int) -> str:
+def _extract_pdf_page_unstructured(pdf_path: Path) -> str:
+    """Return full document text via unstructured when pdfplumber yields little or no text."""
+    # Intentionally broad except: optional dependency; swallow so missing unstructured does not break pipeline.
     try:
         from unstructured.partition.pdf import partition_pdf
         elements = partition_pdf(str(pdf_path), strategy="hi_res")
-        # elements can be by page in some versions; treat as single list and take a slice
-        # Unstructured may not support page index; fallback: partition and join all, then we use only when pdfplumber fails
         texts = []
         for el in elements:
             if hasattr(el, "text"):
@@ -100,7 +102,6 @@ def _extract_pdf_page_unstructured(pdf_path: Path, page_num: int) -> str:
             else:
                 texts.append(str(el))
         full = "\n".join(texts)
-        # No direct page split in partition_pdf; return full doc for fallback (caller uses for bad pages)
         return full.strip()
     except Exception as e:
         logger.debug("Unstructured fallback failed for %s: %s", pdf_path, e)
@@ -120,7 +121,7 @@ def _extract_iom_pdf(pdf_path: Path, manual_id: str, chapter: str | None) -> str
     # If pdfplumber got nothing or very little (e.g. scanned/image PDF), try unstructured once
     chars_per_page = len(result) / max(1, num_pages)
     if not result.strip() or chars_per_page < _PDF_MIN_CHARS_PER_PAGE:
-        fallback = _extract_pdf_page_unstructured(pdf_path, 0)
+        fallback = _extract_pdf_page_unstructured(pdf_path)
         if len(fallback) > len(result):
             result = fallback
     return result
@@ -150,9 +151,12 @@ def extract_iom(processed_dir: Path, raw_dir: Path, *, force: bool = False) -> l
                 continue
             try:
                 text = _extract_iom_pdf(pdf_path, manual_id, chapter)
-            except Exception as e:
+            except OSError as e:
                 logger.warning("Extract failed for %s: %s", pdf_path, e)
                 continue
+            except Exception as e:
+                logger.warning("Extract failed for %s: %s", pdf_path, e)
+                raise
             if not text.strip():
                 logger.warning("No text recovered for %s; skipping", pdf_path)
                 continue
@@ -277,8 +281,9 @@ def extract_mcd(processed_dir: Path, raw_dir: Path, *, force: bool = False) -> l
                         written.append((txt_path, meta_path))
                         count += 1
                 if count:
-                    logger.info("MCD %s: wrote %d docs from %s", out_sub, count, csv_path.name)
-            except Exception as e:
+                    # count includes both newly written and skipped (when not force)
+                    logger.info("MCD %s: %d docs from %s", out_sub, count, csv_path.name)
+            except (OSError, csv.Error, UnicodeDecodeError) as e:
                 logger.warning("MCD CSV %s: %s", csv_path, e)
     return written
 
@@ -315,7 +320,7 @@ def _format_date_yyyymmdd(s: str) -> str | None:
     try:
         y, m, d = s[:4], s[4:6], s[6:8]
         return f"{y}-{m}-{d}"
-    except Exception:
+    except (ValueError, IndexError, TypeError):
         return None
 
 
@@ -392,7 +397,7 @@ def extract_hcpcs(processed_dir: Path, raw_dir: Path, *, force: bool = False) ->
 # --- ICD-10-CM (optional XML) ---
 
 
-def _first_child(elem, *names: str):
+def _first_child(elem: Element, *names: str) -> Element | None:
     """First direct child matching any of the given tag names (avoids element truth-value)."""
     for name in names:
         child = elem.find(name)
@@ -402,14 +407,18 @@ def _first_child(elem, *names: str):
 
 
 def extract_icd10cm(processed_dir: Path, raw_dir: Path, *, force: bool = False) -> list[tuple[Path, Path]]:
-    """If ICD-10-CM ZIP exists, extract and parse XML for code-description pairs."""
+    """If ICD-10-CM ZIP exists, extract and parse XML for code-description pairs.
+
+    Uses root.iter() over all elements; any element with direct <code> and <desc> (or
+    codeValue/description/shortDescription) children produces one doc. When multiple
+    elements yield the same code, the same output path is used so the last write wins.
+    """
     icd_dir = raw_dir / "codes" / "icd10-cm"
     if not icd_dir.exists():
         return []
     written: list[tuple[Path, Path]] = []
     for zip_path in icd_dir.glob("*.zip"):
         try:
-            import xml.etree.ElementTree as ET
             root = None
             with zipfile.ZipFile(zip_path, "r") as zf:
                 xml_names = [n for n in zf.namelist() if n.lower().endswith(".xml") and "tabular" in n.lower()]
@@ -454,7 +463,7 @@ def extract_icd10cm(processed_dir: Path, raw_dir: Path, *, force: bool = False) 
                     )
                     txt_path, meta_path = _write_doc(processed_dir, "codes/icd10cm", doc_id, content, meta)
                     written.append((txt_path, meta_path))
-        except Exception as e:
+        except (zipfile.BadZipFile, ET.ParseError, OSError) as e:
             logger.warning("ICD-10-CM %s: %s", zip_path, e)
     return written
 

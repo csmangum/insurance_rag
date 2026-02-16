@@ -3,10 +3,11 @@
 import argparse
 import logging
 import sys
+from typing import get_args
 
 from medicare_rag.config import PROCESSED_DIR, RAW_DIR
 from medicare_rag.ingest.chunk import chunk_documents
-from medicare_rag.ingest.extract import extract_all
+from medicare_rag.ingest.extract import extract_all, SourceKind
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,8 +16,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SOURCES = ("iom", "mcd", "codes", "all")
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -24,7 +23,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--source",
-        choices=SOURCES,
+        choices=get_args(SourceKind),
         default="all",
         help="Source to process: iom, mcd, codes, or all (default: all)",
     )

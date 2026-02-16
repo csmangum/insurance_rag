@@ -1,5 +1,8 @@
 """Tests for extraction and chunking (Phase 2)."""
 import csv
+import importlib.util
+import json
+import sys
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -8,6 +11,7 @@ import pytest
 
 from medicare_rag.ingest.chunk import _is_code_doc, chunk_documents
 from medicare_rag.ingest.extract import (
+    _extract_mcd_zip,
     _format_date_yyyymmdd,
     _html_to_text,
     _meta_schema,
@@ -97,7 +101,7 @@ def test_extract_iom_writes_txt_and_meta(tmp_iom_raw: Path, tmp_path: Path) -> N
     assert txt_path.exists()
     assert meta_path.exists()
     assert "Chapter 6 content" in txt_path.read_text()
-    meta = __import__("json").loads(meta_path.read_text())
+    meta = json.loads(meta_path.read_text())
     assert meta["source"] == "iom"
     assert meta["manual"] == "100-02"
     assert meta["chapter"] == "6"
@@ -138,7 +142,7 @@ def test_extract_mcd_writes_txt_and_meta(tmp_mcd_raw: Path, tmp_path: Path) -> N
     text = txt_path.read_text()
     assert "Coverage criteria" in text
     assert "<p>" not in text
-    meta = __import__("json").loads(meta_path.read_text())
+    meta = json.loads(meta_path.read_text())
     assert meta["source"] == "mcd"
     assert meta.get("lcd_id") or "L12345" in str(meta.get("doc_id", ""))
 
@@ -185,7 +189,7 @@ def test_extract_hcpcs_writes_txt_and_meta(tmp_hcpcs_raw: Path, tmp_path: Path) 
     assert "A1001" in text
     assert "Dressing" in text
     assert "continued description" in text
-    meta = __import__("json").loads(meta_path.read_text())
+    meta = json.loads(meta_path.read_text())
     assert meta["source"] == "codes"
     assert meta.get("hcpcs_code") == "A1001"
 
@@ -241,7 +245,7 @@ def test_extract_icd10cm_writes_txt_and_meta(tmp_icd10cm_raw: Path, tmp_path: Pa
         assert meta_path.exists()
         text = txt_path.read_text()
         assert "Code:" in text and "Description:" in text
-        meta = __import__("json").loads(meta_path.read_text())
+        meta = json.loads(meta_path.read_text())
         assert meta["source"] == "codes"
         assert "icd10_code" in meta
         by_code[meta["icd10_code"]] = (text, meta)
@@ -285,3 +289,94 @@ def test_chunk_documents_code_one_chunk_per_doc(tmp_path: Path) -> None:
     assert docs[0].page_content.strip().startswith("Code:")
     assert docs[0].metadata["source"] == "codes"
     assert "chunk_index" not in docs[0].metadata
+
+
+# --- Zip path traversal (MCD) ---
+
+
+def test_extract_mcd_zip_rejects_path_traversal(tmp_path: Path) -> None:
+    """Extraction stays under intended directory; no file written via ../ escape."""
+    mcd_dir = tmp_path / "mcd"
+    mcd_dir.mkdir()
+    zip_path = mcd_dir / "evil.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("../outside.csv", b"col1\nval1")
+        zf.writestr("safe/subdir/ok.csv", b"LCD_ID,Title\nL1,Test")
+    _extract_mcd_zip(mcd_dir, zip_path, "evil")
+    assert not (tmp_path.parent / "outside.csv").exists()
+    assert (mcd_dir / "evil" / "safe" / "subdir" / "ok.csv").exists()
+
+
+# --- Chunk when .meta.json missing ---
+
+
+def test_chunk_documents_without_meta_json(tmp_path: Path) -> None:
+    """When only .txt exists, chunking still runs and doc_id is derived from subdir and stem."""
+    (tmp_path / "iom" / "100-02").mkdir(parents=True)
+    (tmp_path / "iom" / "100-02" / "only_txt.txt").write_text("Some content here.")
+    docs = chunk_documents(tmp_path, source="iom")
+    assert len(docs) >= 1
+    assert docs[0].metadata.get("doc_id") == "iom_only_txt"
+
+
+# --- ICD-10-CM edge cases ---
+
+
+def test_extract_icd10cm_empty_xml_writes_nothing(tmp_path: Path) -> None:
+    """ZIP with XML that has no code/desc elements produces no output files."""
+    icd_dir = tmp_path / "raw" / "codes" / "icd10-cm"
+    icd_dir.mkdir(parents=True)
+    zip_path = icd_dir / "empty.zip"
+    xml_content = '<?xml version="1.0"?><root><empty/></root>'
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("data.xml", xml_content.encode("utf-8"))
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    written = extract_icd10cm(processed, tmp_path / "raw", force=True)
+    assert len(written) == 0
+
+
+def test_extract_icd10cm_duplicate_code_last_write_wins(tmp_path: Path) -> None:
+    """When the same code appears in multiple elements, one output file exists (last write wins)."""
+    icd_dir = tmp_path / "raw" / "codes" / "icd10-cm"
+    icd_dir.mkdir(parents=True)
+    zip_path = icd_dir / "dup.zip"
+    xml_content = """<?xml version="1.0"?>
+<root>
+  <row><code>Z99.0</code><desc>First description</desc></row>
+  <row><code>Z99.0</code><desc>Second description wins</desc></row>
+</root>
+"""
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("tabular.xml", xml_content.encode("utf-8"))
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    extract_icd10cm(processed, tmp_path / "raw", force=True)
+    # Extractor appends to written for each element; only one file on disk (last write wins)
+    out_dir = processed / "codes" / "icd10cm"
+    files = list(out_dir.rglob("*.txt"))
+    assert len(files) == 1
+    assert "Second description wins" in files[0].read_text()
+
+
+# --- CLI smoke test ---
+
+
+def test_ingest_all_skip_extract_exits_zero(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """CLI with --skip-extract and pre-populated processed dir exits 0 and reports chunk count."""
+    (tmp_path / "iom" / "100-02").mkdir(parents=True)
+    (tmp_path / "iom" / "100-02" / "ch1.txt").write_text("Short.")
+    (tmp_path / "iom" / "100-02" / "ch1.meta.json").write_text(
+        json.dumps({"source": "iom", "manual": "100-02", "chapter": "1", "doc_id": "iom_100-02_ch1"})
+    )
+    script_path = Path(__file__).resolve().parent.parent / "scripts" / "ingest_all.py"
+    with patch("medicare_rag.config.PROCESSED_DIR", tmp_path), patch("medicare_rag.config.RAW_DIR", tmp_path):
+        spec = importlib.util.spec_from_file_location("ingest_all", script_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["ingest_all"] = module
+        spec.loader.exec_module(module)
+        with patch("sys.argv", ["ingest_all.py", "--skip-extract"]):
+            exit_code = module.main()
+    assert exit_code == 0
+    out = capsys.readouterr()
+    assert "Documents (chunks):" in out.out or "chunks" in out.out.lower()

@@ -37,8 +37,6 @@ def _load_extracted_docs(
         if not base.exists():
             continue
         for txt_path in base.rglob("*.txt"):
-            if txt_path.suffix != ".txt":
-                continue
             meta_path = txt_path.parent / f"{txt_path.stem}.meta.json"
             if not meta_path.exists():
                 logger.debug("No meta for %s", txt_path)
