@@ -37,9 +37,14 @@ def _load_store():
     return get_or_create_chroma(emb)
 
 
-def _get_collection_meta(store) -> dict[str, Any]:
-    """Gather metadata stats from the Chroma collection for filter options."""
-    collection = store._collection
+@st.cache_data(show_spinner=False)
+def _get_collection_meta(_store) -> dict[str, Any]:
+    """Gather metadata stats from the Chroma collection for filter options.
+    
+    Cached to avoid reloading all metadata on every rerun.
+    Note: _store is prefixed with underscore to exclude from cache key.
+    """
+    collection = _store._collection
     count = collection.count()
     if count == 0:
         return {"count": 0, "sources": [], "manuals": [], "jurisdictions": []}
@@ -84,31 +89,10 @@ QUICK_QUESTIONS: list[str] = [
 ]
 
 # ---------------------------------------------------------------------------
-# CSS for bubble buttons and result cards
+# CSS for result cards
 # ---------------------------------------------------------------------------
 _CUSTOM_CSS = """
 <style>
-/* Quick-question bubbles */
-div.bubble-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-}
-div.bubble-container button {
-    background: #f0f2f6;
-    border: 1px solid #d1d5db;
-    border-radius: 1.25rem;
-    padding: 0.4rem 1rem;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-}
-div.bubble-container button:hover {
-    background: #e0e7ff;
-    border-color: #6366f1;
-}
-
 /* Result card styling */
 div.result-card {
     border: 1px solid #e5e7eb;
