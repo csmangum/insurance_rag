@@ -191,7 +191,7 @@ def _build_metadata_filter(
     """Build a Chroma where-clause dict from sidebar selections."""
     parts: dict[str, str] = {}
     if source_filter and source_filter != "All":
-        parts["source"] = source_filter.lower()
+        parts["source"] = source_filter
     if manual_filter and manual_filter != "All":
         parts["manual"] = manual_filter
     if jurisdiction_filter and jurisdiction_filter != "All":
@@ -221,7 +221,7 @@ def _render_result_card(rank: int, doc: Any, score: float, show_full: bool) -> N
     ]
     for label, val in pill_keys:
         if val:
-            pills_html += f'<span class="meta-pill"><b>{label}:</b> {val}</span>'
+            pills_html += f'<span class="meta-pill"><b>{label}:</b> {_escape(str(val))}</span>'
 
     preview = content if show_full else (content[:500] + "..." if len(content) > 500 else content)
 
@@ -311,18 +311,16 @@ def main() -> None:
     # -- Quick-check bubbles --
     st.markdown("##### Quick checks")
     bubble_cols = st.columns(4)
-    selected_bubble: str | None = None
     for i, q in enumerate(QUICK_QUESTIONS):
         col = bubble_cols[i % 4]
         if col.button(q, key=f"bubble_{i}", use_container_width=True):
-            selected_bubble = q
+            st.session_state.search_input = q
 
     st.divider()
 
     # -- Search bar --
     query = st.text_input(
         "Search query",
-        value=selected_bubble or "",
         placeholder="Type your search query here...",
         key="search_input",
     )
