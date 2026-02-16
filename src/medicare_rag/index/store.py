@@ -1,6 +1,5 @@
 """ChromaDB vector store (Phase 3)."""
 import hashlib
-import logging
 from typing import TYPE_CHECKING
 
 from langchain_core.documents import Document
@@ -11,7 +10,6 @@ if TYPE_CHECKING:
 
 from medicare_rag.config import CHROMA_DIR, COLLECTION_NAME
 
-logger = logging.getLogger(__name__)
 
 # Chroma allows str, int, float, bool in metadata
 def _sanitize_metadata(meta: dict) -> dict:
@@ -63,6 +61,10 @@ def upsert_documents(
     if not documents:
         return 0, 0
 
+    # We use the LangChain Chroma wrapper's _collection for bulk get(include=["metadatas"])
+    # and upsert() to support incremental indexing by content_hash. Full-collection get()
+    # loads all ids/metadatas into memory; for very large corpora, consider batch get by
+    # chunk ids or a side index.
     collection = store._collection
     # Existing ids -> content_hash
     existing = collection.get(include=["metadatas"])

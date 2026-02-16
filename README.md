@@ -49,3 +49,15 @@ pytest tests/ -v
 ```
 
 Phase 1 tests live in `tests/test_download.py` (mocked HTTP, idempotency).
+
+## Phase 3: Index (embed + vector store)
+
+After extraction and chunking, run the full ingest to embed and store chunks:
+
+```bash
+python scripts/ingest_all.py [--source iom|mcd|codes|all] [--force]
+```
+
+This runs extract → chunk → embed → store. Use `--skip-index` to only extract and chunk (no embedding or vector store). The vector store is persisted at `data/chroma/` with collection name `medicare_rag`. Updates are incremental by content hash; only new or changed chunks are re-embedded and upserted. Hash lookup uses a full-colpus load into memory, so for very large corpora you may need a different strategy (e.g. batch get by chunk ids or a side index).
+
+Chroma/embedding tests in `tests/test_index.py` are skipped when Chroma is unavailable (e.g. on Python 3.14+ with pydantic v1).

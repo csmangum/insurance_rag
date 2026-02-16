@@ -169,19 +169,14 @@ def test_upsert_documents_incremental_updates_changed(chroma_dir: Path) -> None:
 
 
 def test_upsert_documents_empty_list() -> None:
-    with patch("medicare_rag.index.store.CHROMA_DIR", Path("/tmp/empty_chroma")), patch(
-        "medicare_rag.index.store.get_or_create_chroma"
-    ):
-        # We only need to test the return value when documents is empty;
-        # we cannot call get_or_create_chroma with a fake dir that may not exist.
-        from medicare_rag.index.store import upsert_documents
-        # Pass a mock store that has _collection.get returning empty
-        class MockCollection:
-            def get(self, include=None):
-                return {"ids": [], "metadatas": []}
-        class MockStore:
-            _collection = MockCollection()
-        emb = get_embeddings()
-        n, skip = upsert_documents(MockStore(), [], emb)
-        assert n == 0
-        assert skip == 0
+    class MockCollection:
+        def get(self, include=None):
+            return {"ids": [], "metadatas": []}
+
+    class MockStore:
+        _collection = MockCollection()
+
+    emb = get_embeddings()
+    n, skip = upsert_documents(MockStore(), [], emb)
+    assert n == 0
+    assert skip == 0
