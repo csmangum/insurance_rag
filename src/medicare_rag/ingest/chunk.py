@@ -1,1 +1,97 @@
-"""Chunking with RecursiveCharacterTextSplitter (Phase 2)."""
+"""Chunking with RecursiveCharacterTextSplitter (Phase 2).
+
+Loads extracted .txt + .meta.json from processed_dir and returns LangChain Documents.
+"""
+
+import json
+import logging
+from pathlib import Path
+from typing import Literal
+
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+logger = logging.getLogger(__name__)
+
+SourceKind = Literal["iom", "mcd", "codes", "all"]
+
+# Default splitter: ~1000 chars, ~200 overlap
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
+
+
+def _load_extracted_docs(
+    processed_dir: Path,
+    source: SourceKind,
+) -> list[tuple[str, dict]]:
+    """Scan processed_dir for .txt + .meta.json pairs; return (content, metadata) list."""
+    processed_dir = Path(processed_dir)
+    out: list[tuple[str, dict]] = []
+    subdirs = []
+    if source == "all":
+        subdirs = ["iom", "mcd", "codes"]
+    else:
+        subdirs = [source]
+    for sub in subdirs:
+        base = processed_dir / sub
+        if not base.exists():
+            continue
+        for txt_path in base.rglob("*.txt"):
+            meta_path = txt_path.parent / f"{txt_path.stem}.meta.json"
+            if not meta_path.exists():
+                logger.debug("No meta for %s", txt_path)
+                meta = {}
+            else:
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except Exception as e:
+                    logger.warning("Meta read %s: %s", meta_path, e)
+                    meta = {}
+            try:
+                content = txt_path.read_text(encoding="utf-8", errors="replace")
+            except Exception as e:
+                logger.warning("Read %s: %s", txt_path, e)
+                continue
+            meta["doc_id"] = meta.get("doc_id") or f"{sub}_{txt_path.stem}"
+            out.append((content, meta))
+    return out
+
+
+def _is_code_doc(meta: dict) -> bool:
+    return meta.get("source") == "codes"
+
+
+def chunk_documents(
+    processed_dir: Path,
+    *,
+    source: SourceKind = "all",
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
+) -> list[Document]:
+    """Load extracted docs from processed_dir and return chunked LangChain Documents.
+
+    Policy docs (IOM, MCD) use RecursiveCharacterTextSplitter. Code docs (HCPCS, ICD-10)
+    are kept as one chunk per document (logical grouping).
+    """
+    processed_dir = Path(processed_dir)
+    pairs = _load_extracted_docs(processed_dir, source)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    documents: list[Document] = []
+    for content, meta in pairs:
+        parent_meta = {k: v for k, v in meta.items() if v is not None}
+        if _is_code_doc(meta):
+            # One chunk per code document
+            documents.append(Document(page_content=content.strip(), metadata=parent_meta))
+        else:
+            chunks = splitter.split_text(content)
+            for i, chunk in enumerate(chunks):
+                chunk_meta = dict(parent_meta)
+                chunk_meta["chunk_index"] = i
+                chunk_meta["total_chunks"] = len(chunks)
+                documents.append(Document(page_content=chunk, metadata=chunk_meta))
+    return documents

@@ -9,14 +9,20 @@ description = "Medicare RAG POC: RAG system for Medicare RCM questions"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "httpx",
-    "python-dotenv",
     "beautifulsoup4",
+    "httpx",
+    "langchain-core",
+    "langchain-text-splitters",
+    "pdfplumber",
+    "python-dotenv",
     "pytest",
 ]
 
 [project.optional-dependencies]
 dev = ["ruff"]
+# Optional: enables PDF fallback for scanned/image PDFs when pdfplumber yields little text.
+# Without it, those PDFs may yield empty or short extractions.
+unstructured = ["unstructured"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
