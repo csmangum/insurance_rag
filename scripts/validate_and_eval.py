@@ -108,6 +108,9 @@ def validate_index(store) -> dict:
     results["stats"]["total_documents"] = doc_count
 
     # 3. Fetch ALL metadata for comprehensive stats (batch if large)
+    # Initialize source_counter before conditional block (needed for check #12)
+    source_counter: Counter = Counter()
+    
     try:
         all_data = collection.get(
             include=["metadatas", "documents"],
@@ -126,7 +129,6 @@ def validate_index(store) -> dict:
 
         # 4. Metadata completeness
         missing_keys_count: dict[str, int] = defaultdict(int)
-        source_counter: Counter = Counter()
         has_source_count = 0
         metadata_key_counter: Counter = Counter()
 
@@ -423,7 +425,11 @@ def _compute_consistency(
     Each entry in group_results maps question_id -> {"doc_ids": list[str], ...}
     """
     if len(group_results) < 2:
-        return {"score": 1.0, "detail": "single question in group"}
+        return {
+            "score": 1.0,
+            "detail": "single question in group",
+            "questions": list(group_results.keys()),
+        }
 
     ids_list = list(group_results.values())
     doc_id_sets = [set(r["doc_ids"]) for r in ids_list]
@@ -489,6 +495,9 @@ def run_eval(
     # Consistency groups
     consistency_groups: dict[str, dict[str, dict]] = defaultdict(dict)
 
+    # Cache retrieved docs by question for multi-k sweep
+    docs_cache: dict[str, list] = {}
+
     for q in questions:
         qid = q.get("id", "?")
         query = q.get("query", "")
@@ -502,6 +511,9 @@ def run_eval(
         docs = retriever.invoke(query)
         latency_ms = (time.perf_counter() - t0) * 1000
         latencies.append(latency_ms)
+
+        # Cache docs for multi-k sweep
+        docs_cache[qid] = docs
 
         # Trim to primary k for scoring
         docs_at_k = docs[:k]
@@ -546,10 +558,11 @@ def run_eval(
         kv_precisions = []
         kv_ndcgs = []
         for i, q in enumerate(questions):
+            qid = q.get("id", "?")
             expected_keywords = q.get("expected_keywords")
             expected_sources = q.get("expected_sources")
             # Re-use already retrieved docs (we retrieved max(k_values))
-            docs = retriever.invoke(q.get("query", ""))
+            docs = docs_cache[qid]
             docs_kv = docs[:kv]
             ev = _evaluate_question(docs_kv, expected_keywords, expected_sources, kv)
             if ev["hit"]:
@@ -871,6 +884,7 @@ def main() -> int:
                 if args.json:
                     print(json.dumps(all_output, indent=2, default=str))
                 return 1
+            # When both validate and eval are running, still return failure at the end
         else:
             logger.info("Validation PASSED")
 
@@ -934,6 +948,10 @@ def main() -> int:
 
     if args.json:
         print(json.dumps(all_output, indent=2, default=str))
+
+    # Return failure if validation failed (even if eval also ran)
+    if do_validate and not all_output.get("validation", {}).get("passed", True):
+        return 1
 
     return 0
 
