@@ -9,14 +9,13 @@ import httpx
 from bs4 import BeautifulSoup
 
 from medicare_rag.download._manifest import file_sha256, write_manifest
-from medicare_rag.download._utils import sanitize_filename_from_url
+from medicare_rag.download._utils import DOWNLOAD_TIMEOUT, sanitize_filename_from_url
 
 logger = logging.getLogger(__name__)
 
 HCPCS_QUARTERLY_URL = "https://www.cms.gov/medicare/coding-billing/healthcare-common-procedure-system/quarterly-update"
 # ICD-10-CM: set ICD10_CM_ZIP_URL in env to a CDC ZIP (e.g. from https://www.cdc.gov/nchs/icd/icd-10-cm.htm or FTP)
 ICD10_CM_ZIP_URL_ENV = "ICD10_CM_ZIP_URL"
-DEFAULT_TIMEOUT = 60.0
 
 
 def _latest_hcpcs_zip_url(client: httpx.Client) -> str | None:
@@ -42,7 +41,9 @@ def download_codes(raw_dir: Path, *, force: bool = False) -> None:
     out_base.mkdir(parents=True, exist_ok=True)
     files_with_hashes: list[tuple[Path, str | None]] = []
 
-    with httpx.Client(timeout=DEFAULT_TIMEOUT, follow_redirects=True) as client:
+    sources_list: list[str] = [HCPCS_QUARTERLY_URL]
+
+    with httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
         # HCPCS
         hcpcs_dir = out_base / "hcpcs"
         hcpcs_dir.mkdir(parents=True, exist_ok=True)
@@ -51,35 +52,35 @@ def download_codes(raw_dir: Path, *, force: bool = False) -> None:
             raise RuntimeError(
                 f"Could not find latest HCPCS ZIP link on {HCPCS_QUARTERLY_URL}"
             )
+        name = sanitize_filename_from_url(zip_url, "hcpcs.zip")
+        if not name.lower().endswith(".zip"):
+            name += ".zip"
+        dest = hcpcs_dir / name
+        if dest.exists() and not force:
+            logger.info(
+                "HCPCS file already exists: %s (use --force to re-download)", dest
+            )
+            try:
+                files_with_hashes.append((dest, file_sha256(dest)))
+            except OSError:
+                files_with_hashes.append((dest, None))
         else:
-            name = sanitize_filename_from_url(zip_url, "hcpcs.zip")
-            if not name.lower().endswith(".zip"):
-                name += ".zip"
-            dest = hcpcs_dir / name
-            if dest.exists() and not force:
-                logger.info(
-                    "HCPCS file already exists: %s (use --force to re-download)", dest
-                )
-                try:
-                    files_with_hashes.append((dest, file_sha256(dest)))
-                except OSError:
-                    files_with_hashes.append((dest, None))
-            else:
-                logger.info("Downloading HCPCS %s -> %s", zip_url, dest)
-                with client.stream("GET", zip_url) as r:
-                    r.raise_for_status()
-                    with dest.open("wb") as f:
-                        for chunk in r.iter_bytes():
-                            if chunk:
-                                f.write(chunk)
-                try:
-                    files_with_hashes.append((dest, file_sha256(dest)))
-                except OSError:
-                    files_with_hashes.append((dest, None))
+            logger.info("Downloading HCPCS %s -> %s", zip_url, dest)
+            with client.stream("GET", zip_url) as r:
+                r.raise_for_status()
+                with dest.open("wb") as f:
+                    for chunk in r.iter_bytes():
+                        if chunk:
+                            f.write(chunk)
+            try:
+                files_with_hashes.append((dest, file_sha256(dest)))
+            except OSError:
+                files_with_hashes.append((dest, None))
 
         # ICD-10-CM (optional, from env)
         icd_url = os.environ.get(ICD10_CM_ZIP_URL_ENV)
         if icd_url:
+            sources_list.append(icd_url)
             icd_dir = out_base / "icd10-cm"
             icd_dir.mkdir(parents=True, exist_ok=True)
             name = sanitize_filename_from_url(icd_url, "icd10cm.zip")
@@ -119,5 +120,6 @@ def download_codes(raw_dir: Path, *, force: bool = False) -> None:
         HCPCS_QUARTERLY_URL,
         files_with_hashes,
         base_dir=out_base,
+        sources=sources_list,
     )
     logger.info("Wrote manifest to %s", manifest_path)

@@ -38,7 +38,7 @@ python scripts/download_all.py [--source iom|mcd|codes|all] [--force]
 - `--source`: `iom` (IOM manuals 100-02, 100-03, 100-04), `mcd` (MCD bulk ZIP), `codes` (HCPCS + optional ICD-10-CM), or `all` (default).
 - `--force`: Re-download and overwrite existing files; otherwise downloads are skipped when the file or manifest already exists.
 
-Data is written under `data/raw/` (e.g. `data/raw/iom/`, `data/raw/mcd/`, `data/raw/codes/`). Each source directory includes a `manifest.json` with source URL, download date, and file list (with optional SHA-256 hashes).
+Data is written under `data/raw/` (e.g. `data/raw/iom/`, `data/raw/mcd/`, `data/raw/codes/`). Each source directory includes a `manifest.json` with source URL, download date, and file list (with optional SHA-256 hashes). The codes manifest may include a `sources` list when both HCPCS and ICD-10-CM were downloaded.
 
 ### Tests
 

@@ -8,13 +8,12 @@ import httpx
 from bs4 import BeautifulSoup
 
 from medicare_rag.download._manifest import file_sha256, write_manifest
-from medicare_rag.download._utils import sanitize_filename_from_url
+from medicare_rag.download._utils import DOWNLOAD_TIMEOUT, sanitize_filename_from_url
 
 logger = logging.getLogger(__name__)
 
 IOM_INDEX_URL = "https://www.cms.gov/medicare/regulations-guidance/manuals/internet-only-manuals-ioms"
 TARGET_MANUALS = ("100-02", "100-03", "100-04")
-DEFAULT_TIMEOUT = 30.0
 
 
 def download_iom(raw_dir: Path, *, force: bool = False) -> None:
@@ -22,7 +21,7 @@ def download_iom(raw_dir: Path, *, force: bool = False) -> None:
     out_base = raw_dir / "iom"
     out_base.mkdir(parents=True, exist_ok=True)
 
-    with httpx.Client(timeout=DEFAULT_TIMEOUT, follow_redirects=True) as client:
+    with httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
         logger.info("Fetching IOM index %s", IOM_INDEX_URL)
         resp = client.get(IOM_INDEX_URL)
         resp.raise_for_status()
@@ -56,12 +55,24 @@ def download_iom(raw_dir: Path, *, force: bool = False) -> None:
 
             manual_dir = out_base / manual_id
             manual_dir.mkdir(parents=True, exist_ok=True)
+            used_names: set[str] = set()
 
             for pdf_url in pdf_links:
                 name = sanitize_filename_from_url(pdf_url, "document.pdf")
                 if not name.lower().endswith(".pdf"):
                     name += ".pdf"
+                stem, ext = (name.rsplit(".", 1) if "." in name else (name, ""))
+                if not ext:
+                    stem, ext = name, ""
+                n = 0
+                candidate = name
+                while candidate in used_names:
+                    n += 1
+                    candidate = f"{stem}_{n}.{ext}" if ext else f"{stem}_{n}"
+                name = candidate
+                used_names.add(name)
                 dest = manual_dir / name
+
                 if dest.exists() and not force:
                     logger.debug("Skipping (exists): %s", dest)
                     try:

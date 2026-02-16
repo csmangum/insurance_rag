@@ -1,4 +1,7 @@
-"""Paths and env config. Load .env via python-dotenv."""
+"""Paths and env config. Load .env via python-dotenv.
+
+Default DATA_DIR is best when running from repo root or with an editable install.
+"""
 import os
 from pathlib import Path
 

@@ -1,6 +1,9 @@
 """Shared utilities for download scripts."""
 from urllib.parse import urlparse
 
+# Shared timeout for all download HTTP requests (seconds)
+DOWNLOAD_TIMEOUT = 60.0
+
 
 def sanitize_filename_from_url(url: str, default_basename: str) -> str:
     """Extract a safe filename from a URL (no path traversal).

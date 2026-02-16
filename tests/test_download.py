@@ -7,9 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from medicare_rag.download._manifest import file_sha256, write_manifest
+from medicare_rag.download._utils import sanitize_filename_from_url
 from medicare_rag.download.codes import download_codes
 from medicare_rag.download.iom import download_iom
-from medicare_rag.download.mcd import download_mcd
+from medicare_rag.download.mcd import _safe_extract_zip, download_mcd
 
 
 def _minimal_zip_bytes() -> bytes:
@@ -69,9 +70,13 @@ def test_mcd_download(tmp_raw: Path) -> None:
     assert "all_data.zip" in manifest.read_text()
 
 
-def test_mcd_idempotency_skips_when_manifest_exists(tmp_raw: Path) -> None:
-    (tmp_raw / "mcd").mkdir(parents=True)
-    (tmp_raw / "mcd" / "manifest.json").write_text('{"source_url": "x", "files": []}')
+def test_mcd_idempotency_skips_when_manifest_and_file_exist(tmp_raw: Path) -> None:
+    mcd_dir = tmp_raw / "mcd"
+    mcd_dir.mkdir(parents=True)
+    (mcd_dir / "readme.txt").write_text("existing")
+    mcd_dir.joinpath("manifest.json").write_text(
+        '{"source_url": "x", "files": [{"path": "readme.txt", "file_hash": null}]}'
+    )
 
     stream_calls: list = []
 
@@ -94,7 +99,7 @@ def test_mcd_idempotency_skips_when_manifest_exists(tmp_raw: Path) -> None:
 
         download_mcd(tmp_raw, force=False)
 
-    assert len(stream_calls) == 0, "Should not download when manifest exists without --force"
+    assert len(stream_calls) == 0, "Should not download when manifest and listed file exist"
 
 
 def test_iom_download_discovers_pdfs_and_writes_manifest(tmp_raw: Path) -> None:
@@ -246,3 +251,141 @@ def test_codes_idempotency_skips_existing_file(tmp_raw: Path) -> None:
 
     # Should have called only the page URL to discover link, not the ZIP URL (because file exists)
     assert len(stream_calls) == 0, "Should not re-download HCPCS ZIP when file exists without --force"
+
+
+def test_safe_extract_zip_skips_zip_slip(tmp_path: Path) -> None:
+    """ZIP entries with path traversal (e.g. ../evil.txt) must not be extracted under output dir."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("safe.txt", "ok")
+        z.writestr("../evil.txt", "bad")
+        z.writestr("sub/ok.txt", "fine")
+    buf.seek(0)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with zipfile.ZipFile(buf, "r") as zf:
+        names = _safe_extract_zip(zf, out_dir)
+    assert "safe.txt" in names
+    assert "sub/ok.txt" in names
+    assert "../evil.txt" not in names
+    assert (out_dir / "safe.txt").exists()
+    assert (out_dir / "sub" / "ok.txt").exists()
+    assert not (out_dir.parent / "evil.txt").exists()
+    assert not (tmp_path / "evil.txt").exists()
+
+
+def test_sanitize_filename_from_url() -> None:
+    assert sanitize_filename_from_url("https://example.com/path/to/file.pdf", "default") == "file.pdf"
+    assert sanitize_filename_from_url("https://example.com/doc", "default") == "doc"
+    assert sanitize_filename_from_url("https://example.com/file.pdf?q=1", "default") == "file.pdf"
+    assert sanitize_filename_from_url("https://example.com/", "default") == "default"
+    assert sanitize_filename_from_url("https://example.com/..", "default") == "default"
+    # Last segment only: ../etc/passwd -> passwd (safe); path/../other.pdf -> other.pdf
+    assert sanitize_filename_from_url("https://example.com/../etc/passwd", "default") == "passwd"
+    assert sanitize_filename_from_url("https://example.com/path/../other.pdf", "default") == "other.pdf"
+
+
+def test_iom_duplicate_filenames_disambiguated(tmp_raw: Path) -> None:
+    """Two PDFs with the same URL path segment get disambiguated (e.g. document.pdf, document_1.pdf)."""
+    index_html = """
+    <html><body>
+    <a href="/manuals/cms012673">100-02</a>
+    <a href="/manuals/cms012674">100-03</a>
+    <a href="/manuals/cms012675">100-04</a>
+    </body></html>
+    """
+    manual_html = """
+    <html><body>
+    <a href="https://cms.gov/docs/document.pdf">First</a>
+    <a href="https://cms.gov/other/document.pdf">Second</a>
+    </body></html>
+    """
+    pdf_a = b"%PDF-1.4 first"
+    pdf_b = b"%PDF-1.4 second"
+
+    def fake_get(url, **kwargs):
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        if "ioms-items" in url or "cms01267" in url:
+            r.text = manual_html
+            return r
+        if "internet-only-manuals" in url and "ioms" in url:
+            r.text = index_html
+            return r
+        r.text = ""
+        return r
+
+    def fake_stream(method, url, **kwargs):
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        content = pdf_b if "other/" in url else pdf_a
+        r.iter_bytes = MagicMock(return_value=iter([content]))
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=r)
+        cm.__exit__ = MagicMock(return_value=False)
+        return cm
+
+    with patch("medicare_rag.download.iom.httpx") as mock_httpx:
+        mock_client = MagicMock()
+        mock_client.get.side_effect = fake_get
+        mock_client.stream.side_effect = fake_stream
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_httpx.Client.return_value = mock_client
+
+        download_iom(tmp_raw, force=True)
+
+    manual_dir = tmp_raw / "iom" / "100-02"
+    pdfs = sorted(manual_dir.glob("*.pdf"))
+    assert len(pdfs) >= 2, "Both PDFs should be present (one possibly disambiguated)"
+    contents = {p.read_bytes() for p in pdfs}
+    assert pdf_a in contents and pdf_b in contents
+    manifest_text = (tmp_raw / "iom" / "manifest.json").read_text()
+    assert "document" in manifest_text
+
+
+def test_mcd_redownloads_when_manifest_exists_but_files_missing(tmp_raw: Path) -> None:
+    """When manifest.json exists but the listed file is missing, download_mcd re-downloads."""
+    mcd_dir = tmp_raw / "mcd"
+    mcd_dir.mkdir(parents=True)
+    mcd_dir.joinpath("manifest.json").write_text(
+        '{"source_url": "x", "files": [{"path": "readme.txt", "file_hash": null}]}'
+    )
+    # Do not create readme.txt so manifest is stale
+
+    zip_content = _minimal_zip_bytes()
+    stream_calls: list = []
+
+    def track_stream(method, url, **kwargs):
+        stream_calls.append(url)
+        r = MagicMock()
+        r.raise_for_status = MagicMock()
+        r.iter_bytes = MagicMock(return_value=iter([zip_content]))
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=r)
+        cm.__exit__ = MagicMock(return_value=False)
+        return cm
+
+    with patch("medicare_rag.download.mcd.httpx") as mock_httpx:
+        mock_client = MagicMock()
+        mock_client.stream.side_effect = track_stream
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_httpx.Client.return_value = mock_client
+
+        download_mcd(tmp_raw, force=False)
+
+    assert len(stream_calls) == 1, "Should re-download when manifest exists but file is missing"
+    assert (mcd_dir / "readme.txt").exists()
+    assert "MCD test" in (mcd_dir / "readme.txt").read_text()
+
+
+def test_config_raw_dir_under_data_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When DATA_DIR is set in env, RAW_DIR is DATA_DIR / 'raw'."""
+    import importlib
+
+    monkeypatch.setenv("DATA_DIR", "/custom/data")
+    from medicare_rag import config as config_module
+
+    importlib.reload(config_module)
+    assert config_module.RAW_DIR == Path("/custom/data") / "raw"

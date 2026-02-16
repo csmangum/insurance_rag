@@ -1,5 +1,6 @@
 """MCD bulk data download: Download All Data ZIP."""
 
+import json
 import logging
 import shutil
 import zipfile
@@ -9,11 +10,11 @@ from tempfile import NamedTemporaryFile
 import httpx
 
 from medicare_rag.download._manifest import file_sha256, write_manifest
+from medicare_rag.download._utils import DOWNLOAD_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 MCD_ALL_DATA_URL = "https://downloads.cms.gov/medicare-coverage-database/downloads/exports/all_data.zip"
-DEFAULT_TIMEOUT = 60.0
 
 
 def _safe_extract_zip(zf: zipfile.ZipFile, out_dir: Path) -> list[str]:
@@ -37,16 +38,28 @@ def download_mcd(raw_dir: Path, *, force: bool = False) -> None:
     manifest_path = out_dir / "manifest.json"
 
     if not force and manifest_path.exists():
-        logger.info(
-            "MCD manifest already exists at %s; skipping (use --force to re-download)",
-            manifest_path,
-        )
-        return
+        try:
+            with open(manifest_path) as f:
+                manifest_data = json.load(f)
+            files_list = manifest_data.get("files") or []
+            if files_list:
+                first_path = out_dir / files_list[0]["path"]
+                if first_path.exists():
+                    logger.info(
+                        "MCD manifest already exists at %s; skipping (use --force to re-download)",
+                        manifest_path,
+                    )
+                    return
+            logger.warning(
+                "MCD manifest exists but extracted files missing; re-downloading"
+            )
+        except (OSError, json.JSONDecodeError, KeyError):
+            logger.warning("MCD manifest unreadable or invalid; re-downloading")
 
     logger.info("Downloading %s", MCD_ALL_DATA_URL)
     tmp_path: Path | None = None
     try:
-        with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        with httpx.Client(timeout=DOWNLOAD_TIMEOUT) as client:
             with client.stream("GET", MCD_ALL_DATA_URL) as response:
                 response.raise_for_status()
                 with NamedTemporaryFile(suffix=".zip", delete=False) as tmp:

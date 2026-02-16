@@ -20,10 +20,12 @@ def write_manifest(
     files: list[tuple[Path, str | None]],
     *,
     base_dir: Path | None = None,
+    sources: list[str] | None = None,
 ) -> None:
     """Write manifest.json with source_url, download_date, and file list with optional hashes.
 
     files: list of (absolute_path, hash_or_none). If base_dir is set, stored paths are relative to it.
+    sources: optional list of URLs for multi-source manifests (e.g. HCPCS + ICD-10-CM).
     """
     base = base_dir or manifest_path.parent
     entries = []
@@ -33,11 +35,13 @@ def write_manifest(
         except ValueError:
             rel = fp
         entries.append({"path": str(rel), "file_hash": fhash})
-    data = {
+    data: dict = {
         "source_url": source_url,
         "download_date": datetime.now(timezone.utc).isoformat(),
         "files": entries,
     }
+    if sources is not None:
+        data["sources"] = sources
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     with open(manifest_path, "w") as f:
         json.dump(data, f, indent=2)
