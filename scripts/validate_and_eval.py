@@ -755,6 +755,138 @@ def _format_report(metrics: dict) -> list[str]:
     return lines
 
 
+def _build_markdown_report(
+    validation: dict | None, metrics: dict | None, k: int
+) -> str:
+    """Build a markdown report from validation and evaluation results."""
+    from datetime import datetime
+
+    parts = [
+        "# Medicare RAG Index — Validation & Evaluation Report",
+        "",
+        f"*Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+        "",
+    ]
+
+    if validation:
+        parts.extend([
+            "## Index Validation",
+            "",
+            f"- **Result:** {'PASSED' if validation['passed'] else 'FAILED'}",
+            f"- **Checks:** {validation['stats'].get('checks_passed', 0)}/{validation['stats'].get('checks_total', 0)} passed",
+            f"- **Total documents:** {validation['stats'].get('total_documents', 'N/A')}",
+            "",
+        ])
+        src_dist = validation["stats"].get("source_distribution", {})
+        if src_dist:
+            parts.append(f"- **Source distribution:** {src_dist}")
+        cl = validation["stats"].get("content_length", {})
+        if cl:
+            parts.append(
+                f"- **Content length:** min={cl['min']}, max={cl['max']}, "
+                f"median={cl['median']}, mean={cl['mean']:.0f}, p5={cl['p5']}, p95={cl['p95']}"
+            )
+        emb = validation["stats"].get("embedding_dimension")
+        if emb is not None:
+            parts.append(f"- **Embedding dimension:** {emb}")
+        failed = [c for c in validation["checks"] if not c["passed"]]
+        if failed:
+            parts.append("")
+            parts.append("### Failed checks")
+            for c in failed:
+                parts.append(f"- {c['name']}: {c['detail']}")
+        parts.append("")
+
+    if metrics:
+        n = metrics["n_questions"]
+        parts.extend([
+            f"## Retrieval Evaluation (k={k})",
+            "",
+            "### Summary",
+            "",
+            "| Metric | Value |",
+            "|--------|-------|",
+            f"| Questions | {n} |",
+            f"| Hit rate | {metrics['hits']}/{n} ({metrics['hit_rate'] * 100:.1f}%) |",
+            f"| MRR | {metrics['mrr']:.4f} |",
+            f"| Avg Precision@{k} | {metrics['avg_precision_at_k']:.4f} |",
+            f"| Avg NDCG@{k} | {metrics['avg_ndcg_at_k']:.4f} |",
+            "",
+        ])
+        lat = metrics.get("latency", {})
+        if lat:
+            parts.extend([
+                "### Latency",
+                "",
+                f"- median: {lat['median_ms']:.0f} ms, p95: {lat['p95_ms']:.0f} ms, p99: {lat['p99_ms']:.0f} ms",
+                "",
+            ])
+        by_cat = metrics.get("by_category", {})
+        if by_cat:
+            parts.extend([
+                "### By category",
+                "",
+                "| Category | n | Hit rate | MRR | P@k | NDCG@k |",
+                "|----------|---|----------|-----|-----|--------|",
+            ])
+            for cat, m in sorted(by_cat.items()):
+                parts.append(
+                    f"| {cat} | {m['n']} | {m['hit_rate']:.0%} | {m['mrr']:.3f} | "
+                    f"{m['avg_precision_at_k']:.3f} | {m['avg_ndcg_at_k']:.3f} |"
+                )
+            parts.append("")
+        by_diff = metrics.get("by_difficulty", {})
+        if by_diff:
+            parts.extend([
+                "### By difficulty",
+                "",
+                "| Difficulty | n | Hit rate | MRR | P@k | NDCG@k |",
+                "|------------|---|----------|-----|-----|--------|",
+            ])
+            for diff, m in sorted(by_diff.items()):
+                parts.append(
+                    f"| {diff} | {m['n']} | {m['hit_rate']:.0%} | {m['mrr']:.3f} | "
+                    f"{m['avg_precision_at_k']:.3f} | {m['avg_ndcg_at_k']:.3f} |"
+                )
+            parts.append("")
+        by_src = metrics.get("by_expected_source", {})
+        if by_src:
+            parts.extend([
+                "### By expected source",
+                "",
+                "| Source | n | Hit rate | MRR | P@k | NDCG@k |",
+                "|--------|---|----------|-----|-----|--------|",
+            ])
+            for src, m in sorted(by_src.items()):
+                parts.append(
+                    f"| {src} | {m['n']} | {m['hit_rate']:.0%} | {m['mrr']:.3f} | "
+                    f"{m['avg_precision_at_k']:.3f} | {m['avg_ndcg_at_k']:.3f} |"
+                )
+            parts.append("")
+        consistency = metrics.get("consistency", {})
+        if consistency.get("avg_score") is not None:
+            parts.append(f"### Consistency (avg Jaccard): {consistency['avg_score']:.3f}")
+            for gname, gdata in sorted(consistency.get("groups", {}).items()):
+                parts.append(f"- **{gname}:** {gdata['score']:.3f}")
+            parts.append("")
+        parts.extend([
+            "### Per-question results",
+            "",
+            "| Status | Question | P@k | NDCG@k | Rank | Category | Difficulty |",
+            "|--------|----------|-----|--------|------|----------|------------|",
+        ])
+        for r in metrics["results"]:
+            status = "PASS" if r["hit"] else "FAIL"
+            rank = r["first_hit_rank"] if r["first_hit_rank"] else "—"
+            parts.append(
+                f"| {status} | {r['id']} | {r['precision_at_k']:.2f} | {r['ndcg_at_k']:.2f} | "
+                f"{rank} | {r['category']} | {r['difficulty']} |"
+            )
+        parts.append("")
+
+    return "\n".join(parts)
+
+
 def _format_validation_report(validation: dict) -> list[str]:
     """Format validation results into human-readable log lines."""
     lines = []
@@ -862,6 +994,13 @@ def main() -> int:
         "--filter-difficulty",
         type=str,
         help="Only evaluate questions at this difficulty level.",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Write a markdown report to PATH (e.g. data/eval_report.md).",
     )
     args = parser.parse_args()
 
@@ -973,6 +1112,17 @@ def main() -> int:
             # Clean up temp file if created
             if temp_eval_path and temp_eval_path.exists():
                 temp_eval_path.unlink()
+
+    if args.report:
+        report_path = args.report.resolve()
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        md = _build_markdown_report(
+            all_output.get("validation"),
+            all_output.get("evaluation"),
+            args.k,
+        )
+        report_path.write_text(md, encoding="utf-8")
+        logger.info("Report written to %s", report_path)
 
     if args.json:
         print(json.dumps(all_output, indent=2, default=str))
