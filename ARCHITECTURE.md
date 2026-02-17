@@ -292,7 +292,7 @@ An optional web UI for interactive embedding search. Provides:
 - Embedding dimension mismatch detection and user-friendly error messages
 - Collection metadata cached with 5-minute TTL
 
-Uses `_get_raw_collection(store)` from `index.store` to access the Chroma wrapper's underlying collection for batched metadata retrieval and dimension checks (wraps the private `_collection` API).
+Uses `get_raw_collection(store)` from `index.store` to access the Chroma wrapper's underlying collection for batched metadata retrieval and dimension checks (wraps the private `_collection` API).
 
 ## Key Technical Decisions
 

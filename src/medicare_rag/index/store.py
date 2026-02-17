@@ -16,7 +16,7 @@ from medicare_rag.config import (
 )
 
 
-def _get_raw_collection(store: "Chroma"):
+def get_raw_collection(store: "Chroma"):
     """Access the underlying ChromaDB collection from a LangChain Chroma wrapper.
     Raises RuntimeError if the private API has changed.
     """
@@ -82,7 +82,7 @@ def upsert_documents(
     # We use the LangChain Chroma wrapper's _collection for batched get(include=["metadatas"])
     # and upsert() to support incremental indexing by content_hash. Batched get avoids
     # SQLite "too many SQL variables" when the collection is large.
-    collection = _get_raw_collection(store)
+    collection = get_raw_collection(store)
     id_to_hash: dict[str, str] = {}
     offset = 0
     while True:

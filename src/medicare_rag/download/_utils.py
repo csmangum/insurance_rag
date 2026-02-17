@@ -26,6 +26,12 @@ def sanitize_filename_from_url(url: str, default_basename: str) -> str:
     """
     path = urlparse(url).path or ""
     name = unquote(path.rstrip("/").split("/")[-1].split("?")[0].strip())
-    if not name or ".." in name or "/" in name or "\\" in name:
+    if (
+        not name
+        or ".." in name
+        or "/" in name
+        or "\\" in name
+        or any(ord(ch) < 32 for ch in name)
+    ):
         return default_basename
     return name

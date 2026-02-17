@@ -10,7 +10,7 @@ from medicare_rag.index.store import (
     GET_META_BATCH_SIZE,
     _chunk_id,
     _content_hash,
-    _get_raw_collection,
+    get_raw_collection,
     _sanitize_metadata,
     get_or_create_chroma,
     upsert_documents,
@@ -25,20 +25,20 @@ except Exception:
 
 
 def test_get_raw_collection_raises_when_missing() -> None:
-    """_get_raw_collection raises RuntimeError if store has no _collection (API change)."""
+    """get_raw_collection raises RuntimeError if store has no _collection (API change)."""
     store = object()  # no _collection attribute
     with pytest.raises(RuntimeError, match="langchain-chroma API changed"):
-        _get_raw_collection(store)
+        get_raw_collection(store)
 
 
 @pytest.mark.skipif(not _chroma_available, reason="ChromaDB not available")
 def test_get_raw_collection_returns_collection_when_present(chroma_dir: Path) -> None:
-    """_get_raw_collection returns the underlying collection when present."""
+    """get_raw_collection returns the underlying collection when present."""
     with patch("medicare_rag.index.store.CHROMA_DIR", chroma_dir), patch(
         "medicare_rag.index.store.COLLECTION_NAME", "test_medicare_rag"
     ):
         store = get_or_create_chroma(get_embeddings())
-        coll = _get_raw_collection(store)
+        coll = get_raw_collection(store)
     assert coll is not None
     assert hasattr(coll, "get")
     assert hasattr(coll, "count")

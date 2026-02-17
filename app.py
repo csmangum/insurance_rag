@@ -17,8 +17,8 @@ from medicare_rag.config import COLLECTION_NAME, EMBEDDING_MODEL
 from medicare_rag.index.embed import get_embeddings
 from medicare_rag.index.store import (
     GET_META_BATCH_SIZE,
-    _get_raw_collection,
     get_or_create_chroma,
+    get_raw_collection,
 )
 
 st.set_page_config(
@@ -56,7 +56,7 @@ def _get_collection_meta(_store) -> dict[str, Any]:
         _store: Chroma vector store. Underscore prefix follows Streamlit convention
                 to exclude this parameter from the cache key (only TTL-based invalidation).
     """
-    collection = _get_raw_collection(_store)
+    collection = get_raw_collection(_store)
     if collection.count() == 0:
         return {"count": 0, "sources": [], "manuals": [], "jurisdictions": []}
 
@@ -259,7 +259,7 @@ def _get_embedding_dimensions(store, embeddings) -> tuple[int | None, int]:
     """Return (collection_embedding_dim, current_model_dim).
     collection_embedding_dim is None if the collection is empty.
     """
-    collection = _get_raw_collection(store)
+    collection = get_raw_collection(store)
     model_dim: int = len(embeddings.embed_query("x"))
     try:
         sample = collection.get(limit=1, include=["embeddings"])

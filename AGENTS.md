@@ -19,7 +19,7 @@ src/medicare_rag/           # Main package (installed as editable via `pip insta
     _manifest.py            #   Manifest writing and SHA-256 hashing
     _utils.py               #   URL sanitization, stream_download helper, DOWNLOAD_TIMEOUT (from config)
   ingest/                   # Phase 2: text extraction and chunking
-    __init__.py             #   SourceKind type (re-exported by extract, chunk)
+    __init__.py             #   SourceKind type (imported by extract, chunk)
     extract.py              #   PDF/text extraction (pdfplumber, optional unstructured fallback); defusedxml for XML when available
     chunk.py                #   LangChain text splitters (uses CHUNK_SIZE, CHUNK_OVERLAP from config)
   index/                    # Phase 3: embedding and vector store
@@ -39,7 +39,7 @@ tests/                      # Unit tests (pytest; install with pip install -e ".
   test_config.py            #   Safe env int/float parsing
   test_download.py          #   Mocked HTTP, idempotency, zip-slip and URL sanitization
   test_ingest.py            #   Extraction and chunking tests
-  test_index.py             #   Chroma/embedding and _get_raw_collection tests (skipped when Chroma unavailable)
+  test_index.py             #   Chroma/embedding and get_raw_collection tests (skipped when Chroma unavailable)
   test_query.py             #   Retriever and chain tests
   test_search_validation.py #   Search/validation tests
   test_app.py               #   Streamlit app helpers (escape, filters; requires .[ui])
@@ -95,4 +95,4 @@ Tests use `unittest.mock` to mock HTTP calls and external dependencies. No netwo
 - Embedding model default: `sentence-transformers/all-MiniLM-L6-v2`
 - LLM default: `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (configurable via env)
 - Tests follow the pattern: fixture creates `tmp_path`, mocks are applied via `unittest.mock.patch`, assertions verify file creation and manifest contents
-- The Streamlit app and index store use `_get_raw_collection(store)` from `index.store` to access the Chroma wrapper's underlying collection for batched metadata and dimension checks; this wraps the private `_collection` API and may need updating if langchain-chroma changes.
+- The Streamlit app and index store use `get_raw_collection(store)` from `index.store` to access the Chroma wrapper's underlying collection for batched metadata and dimension checks; this wraps the private `_collection` API and may need updating if langchain-chroma changes.

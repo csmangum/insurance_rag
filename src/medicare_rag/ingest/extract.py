@@ -94,8 +94,10 @@ def _iom_chapter_from_path(manual_id: str, rel_path: Path) -> str | None:
 
 
 def _extract_pdf_page_unstructured(pdf_path: Path) -> str:
-    """Return full document text via unstructured when pdfplumber yields little or no text."""
-    # Intentionally broad except: optional dependency; swallow so missing unstructured does not break pipeline.
+    """Return full document text via unstructured when pdfplumber yields little or no text.
+    Catches all exceptions so that missing optional dependency or partition_pdf() runtime/parsing
+    errors do not abort the ingest pipeline.
+    """
     try:
         from unstructured.partition.pdf import partition_pdf
         elements = partition_pdf(str(pdf_path), strategy="hi_res")

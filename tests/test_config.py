@@ -2,7 +2,12 @@
 import os
 from unittest.mock import patch
 
-from medicare_rag.config import _safe_float, _safe_int
+from medicare_rag.config import (
+    _safe_float,
+    _safe_float_positive,
+    _safe_int,
+    _safe_positive_int,
+)
 
 
 class TestSafeInt:
@@ -43,3 +48,31 @@ class TestSafeFloat:
     def test_returns_default_on_empty_string(self) -> None:
         with patch.dict(os.environ, {"_TEST_SAFE_FLOAT_EMPTY": ""}, clear=False):
             assert _safe_float("_TEST_SAFE_FLOAT_EMPTY", 60.0) == 60.0
+
+
+class TestSafePositiveInt:
+    def test_returns_default_when_zero(self) -> None:
+        with patch.dict(os.environ, {"_TEST_POS_INT_ZERO": "0"}, clear=False):
+            assert _safe_positive_int("_TEST_POS_INT_ZERO", 100) == 100
+
+    def test_returns_default_when_negative(self) -> None:
+        with patch.dict(os.environ, {"_TEST_POS_INT_NEG": "-5"}, clear=False):
+            assert _safe_positive_int("_TEST_POS_INT_NEG", 500) == 500
+
+    def test_accepts_positive(self) -> None:
+        with patch.dict(os.environ, {"_TEST_POS_INT_OK": "42"}, clear=False):
+            assert _safe_positive_int("_TEST_POS_INT_OK", 1) == 42
+
+
+class TestSafeFloatPositive:
+    def test_returns_default_when_zero(self) -> None:
+        with patch.dict(os.environ, {"_TEST_FLOAT_POS_ZERO": "0.0"}, clear=False):
+            assert _safe_float_positive("_TEST_FLOAT_POS_ZERO", 60.0) == 60.0
+
+    def test_returns_default_when_negative(self) -> None:
+        with patch.dict(os.environ, {"_TEST_FLOAT_POS_NEG": "-1.0"}, clear=False):
+            assert _safe_float_positive("_TEST_FLOAT_POS_NEG", 60.0) == 60.0
+
+    def test_accepts_positive(self) -> None:
+        with patch.dict(os.environ, {"_TEST_FLOAT_POS_OK": "30.5"}, clear=False):
+            assert _safe_float_positive("_TEST_FLOAT_POS_OK", 60.0) == 30.5
