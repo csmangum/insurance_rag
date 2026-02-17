@@ -1,125 +1,141 @@
-# medicare_rag
+# Medicare RAG
 
-RAG POC for Medicare Revenue Cycle Management: ingest CMS manuals and coverage data, embed, and answer natural-language questions with cited sources.
+A **Retrieval-Augmented Generation (RAG)** proof-of-concept for Medicare Revenue Cycle Management. It ingests CMS manuals, coverage determinations, and coding files; embeds them in a vector store; and answers natural-language questions with cited sources. Everything runs locally—no API keys required.
 
-## Phase 1: Data download
+## What it does
 
-### Setup
+- **Download** — IOM manuals (100-02, 100-03, 100-04), MCD bulk data, HCPCS and optional ICD-10-CM code files into `data/raw/`.
+- **Ingest** — Extract text (PDF and structured sources), chunk with LangChain splitters, embed with sentence-transformers, and upsert into ChromaDB with incremental updates by content hash.
+- **Query** — Interactive REPL and RAG chain: retrieve relevant chunks, then generate answers using a local Hugging Face model (e.g. TinyLlama) with citations.
+- **Validate & evaluate** — Index validation (metadata, sources, embedding dimension) and retrieval evaluation (hit rate, MRR) against a Medicare-focused question set.
+- **Embedding search UI** — Optional Streamlit app for interactive semantic search over the index with filters and quick-check questions.
 
-1. **Create a virtual environment** (recommended for running and testing):
+## Requirements
 
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate   # Windows: .venv\Scripts\activate
-   ```
+- **Python 3.11+**
+- **No API keys** — Embeddings and LLM run locally via sentence-transformers and Hugging Face.
 
-2. **Install the package** (editable, with dependencies):
+## Quick start
 
-   ```bash
-   pip install -e .
-   ```
+```bash
+# Create venv and install
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e .
 
-3. **Environment**: Copy `.env.example` to `.env` and set any overrides (optional for Phase 1):
+# Optional: copy .env.example to .env for paths and model overrides
+cp .env.example .env
 
-   ```bash
-   cp .env.example .env
-   ```
+# Download data (IOM, MCD, codes)
+python scripts/download_all.py --source all
 
-   For Phase 1 downloads you do not need API keys. Set `ICD10_CM_ZIP_URL` if you want to download ICD-10-CM code files (see [CDC ICD-10-CM](https://www.cdc.gov/nchs/icd/icd-10-cm.htm)).
+# Extract, chunk, embed, and store
+python scripts/ingest_all.py --source all
 
-### Download data
+# Ask questions (RAG with local LLM)
+python scripts/query.py
+```
 
-Run the download script from the repo root:
+## Pipeline in detail
+
+### 1. Download
 
 ```bash
 python scripts/download_all.py [--source iom|mcd|codes|all] [--force]
 ```
 
-- `--source`: `iom` (IOM manuals 100-02, 100-03, 100-04), `mcd` (MCD bulk ZIP), `codes` (HCPCS + optional ICD-10-CM), or `all` (default).
-- `--force`: Re-download and overwrite existing files; otherwise downloads are skipped when the file or manifest already exists.
+- **Sources:** `iom` (IOM manuals), `mcd` (MCD bulk ZIP), `codes` (HCPCS + optional ICD-10-CM), or `all`.
+- **Idempotent:** Skips when manifest and files exist; use `--force` to re-download.
+- Output: `data/raw/<source>/` plus a `manifest.json` per source (URL, date, file list, optional SHA-256). Set `ICD10_CM_ZIP_URL` in `.env` if you want ICD-10-CM (see [CDC](https://www.cdc.gov/nchs/icd/icd-10-cm.htm)).
 
-Data is written under `data/raw/` (e.g. `data/raw/iom/`, `data/raw/mcd/`, `data/raw/codes/`). Each source directory includes a `manifest.json` with source URL, download date, and file list (with optional SHA-256 hashes). The codes manifest may include a `sources` list when both HCPCS and ICD-10-CM were downloaded.
-
-### Tests
-
-Run unit tests in the same venv:
+### 2. Ingest (extract → chunk → embed → store)
 
 ```bash
-pytest tests/ -v
+python scripts/ingest_all.py [--source iom|mcd|codes|all] [--force] [--skip-index]
 ```
 
-Phase 1 tests live in `tests/test_download.py` (mocked HTTP, idempotency).
+- **Extract:** PDFs (pdfplumber; optional `unstructured` for image-heavy PDFs), MCD/codes from structured files.
+- **Chunk:** LangChain text splitters; metadata (source, manual, jurisdiction, etc.) is preserved.
+- **Embed & store:** sentence-transformers (default `all-MiniLM-L6-v2`) and ChromaDB at `data/chroma/` (collection `medicare_rag`). Only new or changed chunks (by content hash) are re-embedded and upserted.
+- Use `--skip-index` to run only extract and chunk (no embedding or vector store).
 
-## Phase 3: Index (embed + vector store)
-
-After extraction and chunking, run the full ingest to embed and store chunks:
-
-```bash
-python scripts/ingest_all.py [--source iom|mcd|codes|all] [--force]
-```
-
-This runs extract → chunk → embed → store. Use `--skip-index` to only extract and chunk (no embedding or vector store). The vector store is persisted at `data/chroma/` with collection name `medicare_rag`. Updates are incremental by content hash; only new or changed chunks are re-embedded and upserted. Hash lookup uses a full-colpus load into memory, so for very large corpora you may need a different strategy (e.g. batch get by chunk ids or a side index).
-
-Chroma/embedding tests in `tests/test_index.py` are skipped when Chroma is unavailable (e.g. on Python 3.14+ with pydantic v1).
-
-### Validate and evaluate index
-
-After ingestion, validate the index and run retrieval evaluation:
-
-```bash
-python scripts/validate_and_eval.py              # validate + eval
-python scripts/validate_and_eval.py --validate-only
-python scripts/validate_and_eval.py --eval-only -k 10
-python scripts/validate_and_eval.py --eval-only --json   # metrics as JSON
-```
-
-Validation checks that the Chroma collection exists, has documents, sample metadata (`doc_id`, `content_hash`), and that similarity search runs. Evaluation uses `scripts/eval_questions.json` (Medicare-focused queries with expected keywords/sources) and reports **hit rate** (fraction of queries with a relevant doc in top-k) and **MRR** (mean reciprocal rank). Add or edit entries in `eval_questions.json` to extend the eval set.
-
-## Phase 4: Query (RAG with local LLM)
-
-Run the interactive query REPL (after ingestion):
+### 3. Query (RAG)
 
 ```bash
 python scripts/query.py [--filter-source iom|mcd|codes] [--filter-manual 100-02] [--filter-jurisdiction JL] [-k 8]
 ```
 
-Generation uses a local Hugging Face model (no API key). Configure via env (see `.env.example`):
+- Retrieves top-k chunks by similarity, then generates an answer with the local LLM and prints cited sources.
+- **Env:** `LOCAL_LLM_MODEL`, `LOCAL_LLM_DEVICE` (e.g. `cpu` or `auto`), `LOCAL_LLM_MAX_NEW_TOKENS`, `LOCAL_LLM_REPETITION_PENALTY`. Use `CUDA_VISIBLE_DEVICES=""` for CPU-only.
 
-- **`LOCAL_LLM_MODEL`** — Model id (default: `TinyLlama/TinyLlama-1.1B-Chat-v1.0`).
-- **`LOCAL_LLM_DEVICE`** — `auto` (default), `cpu`, or device map; use `cpu` on headless or when no GPU.
-- **`CUDA_VISIBLE_DEVICES`** — Override GPU visibility (e.g. `CUDA_VISIBLE_DEVICES=""` for CPU-only).
-- Optional: **`LOCAL_LLM_MAX_NEW_TOKENS`**, **`LOCAL_LLM_REPETITION_PENALTY`**.
-
-## Phase 5: Testing and validation
-
-### Unit tests
-
-Run the full test suite (download, ingest, index, query) in the project venv:
+### 4. Validate and evaluate
 
 ```bash
-pytest tests/ -v
+python scripts/validate_and_eval.py                    # validate index + run retrieval eval
+python scripts/validate_and_eval.py --validate-only    # index only
+python scripts/validate_and_eval.py --eval-only -k 10  # retrieval eval only
+python scripts/validate_and_eval.py --eval-only --json  # metrics as JSON
 ```
 
-Tests live in `tests/test_download.py`, `tests/test_ingest.py`, `tests/test_index.py`, and `tests/test_query.py`.
+- **Validation:** Checks Chroma collection, document count, sample metadata (`doc_id`, `content_hash`), and that similarity search runs.
+- **Evaluation:** Uses `scripts/eval_questions.json` (Medicare queries with expected keywords/sources). Reports **hit rate** (relevant doc in top-k) and **MRR** (mean reciprocal rank). Edit `eval_questions.json` to extend the set.
 
-### Automated retrieval eval
-
-Run retrieval evaluation (hit rate and MRR) using the same retriever as the RAG chain and the question set in `scripts/eval_questions.json`:
-
-```bash
-python scripts/validate_and_eval.py              # validate index + run eval
-python scripts/validate_and_eval.py --eval-only -k 10
-python scripts/validate_and_eval.py --eval-only --json   # metrics as JSON
-```
-
-Edit `scripts/eval_questions.json` to add or change questions (each entry: `id`, `query`, `expected_keywords`, `expected_sources`).
-
-### Full-RAG eval (manual assessment)
-
-To assess end-to-end answer quality and citation accuracy, run the full RAG chain (retriever + LLM) on the eval set and generate a report:
+**Full-RAG eval (answer quality):** Run the RAG chain on the eval set and write a report for manual review:
 
 ```bash
 python scripts/run_rag_eval.py [--eval-file scripts/eval_questions.json] [--out data/rag_eval_report.md] [-k 8]
 ```
 
-The script writes a markdown report (default: `data/rag_eval_report.md`) with each question, the generated answer, and cited source metadata. Open the report and manually assess whether answers are accurate and citations correct.
+### 5. Embedding search UI (optional)
+
+```bash
+pip install -e ".[ui]"
+streamlit run app.py
+```
+
+- Semantic search over the index with a search bar and quick-check question buttons.
+- Filters: source, manual, jurisdiction.
+- Options: top-k, distance threshold, full chunk content.
+- Styled result cards with similarity scores and metadata.
+
+## Configuration
+
+Copy `.env.example` to `.env` and override as needed:
+
+| Variable | Purpose |
+|----------|----------|
+| `DATA_DIR` | Root for `raw/`, `processed/`, `chroma/` (default: repo `data/`) |
+| `EMBEDDING_MODEL` | sentence-transformers model (default: `all-MiniLM-L6-v2`). Changing it changes vector dimension; re-ingest or match the model used at index time. |
+| `LOCAL_LLM_MODEL` | Hugging Face model (default: `TinyLlama/TinyLlama-1.1B-Chat-v1.0`) |
+| `LOCAL_LLM_DEVICE` | `auto`, `cpu`, or device map |
+| `ICD10_CM_ZIP_URL` | Optional; for ICD-10-CM code download |
+
+## Testing
+
+```bash
+pytest tests/ -v
+```
+
+- **Download:** `tests/test_download.py` — mocked HTTP, idempotency, zip-slip safety.
+- **Ingest:** `tests/test_ingest.py` — extraction and chunking.
+- **Index:** `tests/test_index.py` — Chroma and embeddings (skipped when Chroma unavailable, e.g. some Python 3.14+ setups).
+- **Query:** `tests/test_query.py` — retriever and RAG chain.
+- **Validation/eval:** `tests/test_search_validation.py` — validation and eval question schema.
+- **UI helpers:** `tests/test_app.py` — Streamlit app helpers (requires `.[ui]`).
+
+No network or real downloads needed for the core suite; mocks are used for HTTP and external deps.
+
+## Optional extras
+
+- **`pip install -e ".[ui]"`** — Streamlit for the embedding search UI.
+- **`pip install -e ".[dev]"`** — ruff for linting/formatting.
+- **`pip install -e ".[unstructured]"`** — Fallback extractor for image-heavy PDFs when pdfplumber yields little text.
+
+## Project layout
+
+- **`src/medicare_rag/`** — Main package: `config`, `download/`, `ingest/`, `index/`, `query/`.
+- **`scripts/`** — CLI: `download_all.py`, `ingest_all.py`, `validate_and_eval.py`, `query.py`, `run_rag_eval.py`, `eval_questions.json`.
+- **`tests/`** — Pytest suite.
+- **`data/`** — Runtime data (gitignored): `raw/`, `processed/`, `chroma/`.
+
+See **AGENTS.md** for detailed layout, conventions, and patterns.
