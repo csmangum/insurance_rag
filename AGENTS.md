@@ -91,3 +91,4 @@ Tests use `unittest.mock` to mock HTTP calls and external dependencies. No netwo
 - Embedding model default: `sentence-transformers/all-MiniLM-L6-v2`
 - LLM default: `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (configurable via env)
 - Tests follow the pattern: fixture creates `tmp_path`, mocks are applied via `unittest.mock.patch`, assertions verify file creation and manifest contents
+- The Streamlit app (`app.py`) uses the Chroma wrapper's `_collection` for batched metadata and dimension checks; this is a private API and may need updating if langchain-chroma changes.

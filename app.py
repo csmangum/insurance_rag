@@ -14,7 +14,7 @@ import streamlit as st
 
 from medicare_rag.config import COLLECTION_NAME, EMBEDDING_MODEL
 from medicare_rag.index.embed import get_embeddings
-from medicare_rag.index.store import get_or_create_chroma
+from medicare_rag.index.store import GET_META_BATCH_SIZE, get_or_create_chroma
 
 st.set_page_config(
     page_title="Medicare Embedding Search",
@@ -38,10 +38,6 @@ def _load_store():
     return get_or_create_chroma(emb)
 
 
-# Batch size for metadata fetch; SQLite has a limit on SQL variables (~999).
-_META_BATCH_SIZE = 500
-
-
 @st.cache_data(show_spinner=False, ttl=300)
 def _get_collection_meta(_store) -> dict[str, Any]:
     """Gather metadata stats from the Chroma collection for filter options.
@@ -55,6 +51,7 @@ def _get_collection_meta(_store) -> dict[str, Any]:
         _store: Chroma vector store. Underscore prefix follows Streamlit convention
                 to exclude this parameter from the cache key (only TTL-based invalidation).
     """
+    # Uses the LangChain Chroma wrapper's private _collection for batched get(); if langchain-chroma changes, this may need updating.
     collection = _store._collection
     if collection.count() == 0:
         return {"count": 0, "sources": [], "manuals": [], "jurisdictions": []}
@@ -68,7 +65,7 @@ def _get_collection_meta(_store) -> dict[str, Any]:
     while True:
         batch = collection.get(
             include=["metadatas"],
-            limit=_META_BATCH_SIZE,
+            limit=GET_META_BATCH_SIZE,
             offset=offset,
         )
         metadatas = batch.get("metadatas") or []
@@ -256,6 +253,7 @@ def _escape(text: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
+        .replace("'", "&#39;")
     )
 
 
@@ -263,6 +261,7 @@ def _get_embedding_dimensions(store, embeddings) -> tuple[int | None, int]:
     """Return (collection_embedding_dim, current_model_dim).
     collection_embedding_dim is None if the collection is empty.
     """
+    # Uses the LangChain Chroma wrapper's private _collection for batched get(); if langchain-chroma changes, this may need updating.
     collection = store._collection
     model_dim: int = len(embeddings.embed_query("x"))
     try:

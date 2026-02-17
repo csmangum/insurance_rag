@@ -8,6 +8,7 @@ from langchain_core.documents import Document
 
 from medicare_rag.index.embed import get_embeddings
 from medicare_rag.index.store import (
+    GET_META_BATCH_SIZE,
     _chunk_id,
     _content_hash,
     _sanitize_metadata,
@@ -180,3 +181,58 @@ def test_upsert_documents_empty_list() -> None:
     n, skip = upsert_documents(MockStore(), [], emb)
     assert n == 0
     assert skip == 0
+
+
+def test_upsert_documents_batched_get_skips_and_upserts() -> None:
+    """Batched collection.get(limit=..., offset=...) is used; existing hashes are skipped, new docs upserted."""
+    existing_doc = Document(
+        page_content="Existing content for doc_0.",
+        metadata={"doc_id": "doc_0", "chunk_index": 0},
+    )
+    existing_hash = _content_hash(existing_doc)
+    new_doc = Document(
+        page_content="Brand new content.",
+        metadata={"doc_id": "new_1", "chunk_index": 0},
+    )
+
+    class MockCollection:
+        def __init__(self, known_hash: str):
+            self._known_hash = known_hash
+            self.upsert_calls: list[dict] = []
+
+        def get(self, include=None, limit=None, offset=0):
+            # Ids must match _chunk_id(doc) format: doc_id when no chunk_index, else doc_id_chunk_index.
+            if offset == 0:
+                ids = [f"doc_{i}_0" for i in range(GET_META_BATCH_SIZE)]
+                metadatas = [
+                    {"content_hash": self._known_hash if i == 0 else "dummy"}
+                    for i in range(GET_META_BATCH_SIZE)
+                ]
+                return {"ids": ids, "metadatas": metadatas}
+            if offset == GET_META_BATCH_SIZE:
+                ids = [
+                    f"doc_{i}_0"
+                    for i in range(GET_META_BATCH_SIZE, GET_META_BATCH_SIZE + 100)
+                ]
+                metadatas = [{"content_hash": "dummy"} for _ in range(100)]
+                return {"ids": ids, "metadatas": metadatas}
+            return {"ids": [], "metadatas": []}
+
+        def upsert(self, ids=None, embeddings=None, metadatas=None, documents=None):
+            self.upsert_calls.append({"ids": ids, "len": len(ids) if ids else 0})
+
+    mock_coll = MockCollection(existing_hash)
+
+    class MockStoreWithBatchedGet:
+        pass
+
+    store = MockStoreWithBatchedGet()
+    store._collection = mock_coll
+
+    embeddings = get_embeddings()
+    n_upserted, n_skipped = upsert_documents(store, [existing_doc, new_doc], embeddings)
+
+    assert n_upserted == 1
+    assert n_skipped == 1
+    assert len(mock_coll.upsert_calls) == 1
+    assert mock_coll.upsert_calls[0]["len"] == 1
