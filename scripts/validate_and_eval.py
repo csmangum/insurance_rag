@@ -88,7 +88,13 @@ def validate_index(store) -> dict:
 
     # 1. Chroma directory exists
     dir_exists = CHROMA_DIR.exists()
-    _check("chroma_dir_exists", dir_exists, str(CHROMA_DIR))
+    from medicare_rag.config import _REPO_ROOT
+    try:
+        rel_path = CHROMA_DIR.relative_to(_REPO_ROOT)
+        detail = f"{rel_path} ({CHROMA_DIR})"
+    except ValueError:
+        detail = str(CHROMA_DIR)
+    _check("chroma_dir_exists", dir_exists, detail)
     if not dir_exists:
         return results
     logger.info("CHROMA_DIR exists: %s", CHROMA_DIR)
@@ -592,7 +598,7 @@ def run_eval(
 
         result_entry = {
             "id": qid,
-            "query": query[:80] + "..." if len(query) > 80 else query,
+            "query": query,
             "category": category,
             "difficulty": difficulty,
             "latency_ms": round(latency_ms, 1),
@@ -935,7 +941,7 @@ def _build_markdown_report(
         parts.extend([
             "### Per-question results",
             "",
-            "| Status | Question | P@k | NDCG@k | Rank | Category | Difficulty |",
+            "| Status | Question ID | P@k | NDCG@k | Rank | Category | Difficulty |",
             "|--------|----------|-----|--------|------|----------|------------|",
         ])
         for r in metrics["results"]:
