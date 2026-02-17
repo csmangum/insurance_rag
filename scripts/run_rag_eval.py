@@ -50,12 +50,6 @@ def _count_citations(answer: str) -> list[int]:
     return sorted(set(int(m) for m in re.findall(r"\[(\d+)\]", answer)))
 
 
-def _keyword_coverage(answer: str, expected_keywords: list[str] | None) -> float:
-    """Fraction of expected keywords present in the answer (case-insensitive)."""
-    if not expected_keywords:
-        return 1.0
-    answer_lower = answer.lower()
-    return sum(1 for kw in expected_keywords if kw.lower() in answer_lower) / len(expected_keywords)
 
 
 def _repetition_ratio(answer: str) -> float:
@@ -72,6 +66,8 @@ def _answer_quality_metrics(
     n_source_docs: int,
 ) -> dict:
     """Compute automated heuristic quality metrics for a single answer."""
+    from validate_and_eval import _keyword_fraction
+
     citations = _count_citations(answer)
     return {
         "answer_length": len(answer),
@@ -79,7 +75,7 @@ def _answer_quality_metrics(
         "citations_found": citations,
         "cites_any_source": len(citations) > 0,
         "cites_all_sources": citations == list(range(1, n_source_docs + 1)) if n_source_docs > 0 else False,
-        "keyword_coverage": round(_keyword_coverage(answer, expected_keywords), 3),
+        "keyword_coverage": round(_keyword_fraction(answer, expected_keywords or []), 3),
         "repetition_ratio": round(_repetition_ratio(answer), 3),
     }
 
