@@ -280,7 +280,13 @@ def get_hcpcs_enrichment(code: str) -> str:
 
     Returns an empty string if the code prefix is not recognised.
     """
-    if not code or not code[0].isalpha():
+    if not code:
+        return ""
+    code = code.strip()
+    if not code:
+        return ""
+    letter = code[0].upper()
+    if not letter.isalpha():
         return ""
 
     prefix = _hcpcs_prefix_2char(code)
@@ -289,11 +295,9 @@ def get_hcpcs_enrichment(code: str) -> str:
         if start <= prefix <= end:
             terms_str = ", ".join(terms)
             return (
-                f"HCPCS {code[0]}-codes: {label}. "
+                f"HCPCS {letter}-codes: {label}. "
                 f"Related terms: {terms_str}."
             )
-
-    letter = code[0].upper()
     if letter in _HCPCS_LETTER_FALLBACK:
         label, terms = _HCPCS_LETTER_FALLBACK[letter]
         terms_str = ", ".join(terms)
