@@ -22,7 +22,7 @@ class TestGetHcpcsEnrichment:
 
     def test_a1_medical_supply(self) -> None:
         result = get_hcpcs_enrichment("A1001")
-        assert "Medical" in result and "Supply" in result or "Surgical" in result
+        assert ("Medical" in result and "Supply" in result) or ("Surgical" in result)
         assert "wound care" in result or "dressing" in result
 
     def test_e_codes_dme(self) -> None:

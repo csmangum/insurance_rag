@@ -190,7 +190,7 @@ def test_extract_hcpcs_writes_txt_and_meta(tmp_hcpcs_raw: Path, tmp_path: Path) 
     assert "continued description" in text
     # Semantic enrichment should be prepended
     assert "HCPCS A-codes" in text
-    assert "Medical" in text and "Supply" in text or "Surgical" in text
+    assert ("Medical" in text and "Supply" in text) or ("Surgical" in text)
     meta = json.loads(meta_path.read_text())
     assert meta["source"] == "codes"
     assert meta.get("hcpcs_code") == "A1001"
