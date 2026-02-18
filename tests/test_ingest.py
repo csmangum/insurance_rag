@@ -146,6 +146,29 @@ def test_extract_mcd_writes_txt_and_meta(tmp_mcd_raw: Path, tmp_path: Path) -> N
     assert meta.get("lcd_id") or "L12345" in str(meta.get("doc_id", ""))
 
 
+def test_extract_mcd_handles_large_csv_fields(tmp_path: Path) -> None:
+    """MCD lcd.csv contains very large policy text fields; extractor should not skip them."""
+    raw = tmp_path / "raw"
+    processed = tmp_path / "processed"
+    mcd = raw / "mcd" / "current_lcd"
+    mcd.mkdir(parents=True)
+
+    huge = "<p>" + ("Policy text " * 20000) + "</p>"  # > 200KB
+    csv_path = mcd / "lcd.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["LCD_ID", "Title", "Body"])
+        w.writeheader()
+        w.writerow({"LCD_ID": "L99999", "Title": "Huge LCD", "Body": huge})
+
+    written = extract_mcd(processed, raw, force=True)
+    assert any(p.name == "L99999.txt" for p, _ in written)
+    out_txt = processed / "mcd" / "lcd" / "L99999.txt"
+    assert out_txt.exists()
+    out = out_txt.read_text()
+    assert "Body:" in out
+    assert "Policy text" in out
+
+
 # --- HCPCS extraction (fixed-width lines) ---
 
 
