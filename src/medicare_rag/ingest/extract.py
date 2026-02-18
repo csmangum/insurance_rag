@@ -33,11 +33,12 @@ _CSV_FIELD_LIMIT_INITIALIZED = False
 
 
 def _ensure_csv_field_size_limit() -> int:
-    """Increase Python's CSV max field size to handle large LCD policy text fields.
+    """Increase Python's global CSV max field size to handle very large text fields.
 
-    Python's built-in csv module has a global per-field size limit. The MCD bulk export's
-    `lcd.csv` can contain very large HTML policy text, which will otherwise raise csv.Error
-    and cause the file to be skipped.
+    Python's built-in csv module has a process-wide per-field size limit. Calling this
+    function raises that limit for all subsequent CSV parsing done in this process
+    (for example, when reading MCD LCD, NCD, and Article CSV exports that may contain
+    very large HTML policy or narrative text).
     """
     global _CSV_FIELD_LIMIT_INITIALIZED
     if _CSV_FIELD_LIMIT_INITIALIZED:
@@ -52,8 +53,14 @@ def _ensure_csv_field_size_limit() -> int:
         except OverflowError:
             desired = int(desired / 2)
             if desired <= 0:
+                current_limit = csv.field_size_limit()
+                logger.warning(
+                    "Could not increase CSV field size limit to desired value on this "
+                    "platform; continuing with current limit %d.",
+                    current_limit,
+                )
                 _CSV_FIELD_LIMIT_INITIALIZED = True
-                return csv.field_size_limit()
+                return current_limit
 
 
 _MCD_LONG_TEXT_KEY_TOKENS = (
@@ -77,7 +84,9 @@ _MCD_LONG_TEXT_KEY_TOKENS = (
 
 def _is_mcd_long_text_key(k: str) -> bool:
     kl = (k or "").strip().lower()
-    return any(t in kl for t in _MCD_LONG_TEXT_KEY_TOKENS)
+    # Use word boundaries to avoid false positives (e.g., "policy_date" matching "policy")
+    pattern = r"\b(?:" + "|".join(re.escape(t) for t in _MCD_LONG_TEXT_KEY_TOKENS) + r")\b"
+    return bool(re.search(pattern, kl))
 
 
 def _meta_schema(
@@ -255,6 +264,11 @@ def _cell_to_text(k: str, v: str) -> str | None:
     if len(s) < 500:
         return f"{k}: {v}"
     if _is_mcd_long_text_key(k):
+        logger.debug(
+            "Including large non-HTML field for key '%s' with length %d characters",
+            k,
+            len(s),
+        )
         return f"{k}:\n{s}"
     return None
 

@@ -153,7 +153,7 @@ def test_extract_mcd_handles_large_csv_fields(tmp_path: Path) -> None:
     mcd = raw / "mcd" / "current_lcd"
     mcd.mkdir(parents=True)
 
-    huge = "<p>" + ("Policy text " * 20000) + "</p>"  # > 200KB
+    huge = "<p>" + ("Policy text " * 20000) + "</p>"  # ~240KB (>200KB)
     csv_path = mcd / "lcd.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["LCD_ID", "Title", "Body"])
@@ -167,6 +167,8 @@ def test_extract_mcd_handles_large_csv_fields(tmp_path: Path) -> None:
     out = out_txt.read_text()
     assert "Body:" in out
     assert "Policy text" in out
+    # Verify that CSV field size limit was actually increased
+    assert csv.field_size_limit() > 200_000
 
 
 # --- HCPCS extraction (fixed-width lines) ---
