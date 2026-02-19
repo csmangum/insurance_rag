@@ -103,7 +103,8 @@ LCD_CHUNK_SIZE = _safe_positive_int("LCD_CHUNK_SIZE", 1500)
 _lcd_overlap_raw = _safe_int("LCD_CHUNK_OVERLAP", 300)
 if _lcd_overlap_raw < 0 or _lcd_overlap_raw >= LCD_CHUNK_SIZE:
     logger.warning(
-        "Invalid LCD_CHUNK_OVERLAP=%d (must be 0 <= overlap < LCD_CHUNK_SIZE=%d), using default 300",
+        "Invalid LCD_CHUNK_OVERLAP=%d (must be 0 <= overlap < LCD_CHUNK_SIZE=%d),"
+        " using default 300",
         _lcd_overlap_raw,
         LCD_CHUNK_SIZE,
     )

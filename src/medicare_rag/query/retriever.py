@@ -5,7 +5,7 @@ applies query expansion plus source-filtered multi-query retrieval to
 improve hit rates on MCD policy content.
 """
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
@@ -14,13 +14,10 @@ from langchain_core.retrievers import BaseRetriever
 from medicare_rag.config import LCD_RETRIEVAL_K
 from medicare_rag.index import get_embeddings, get_or_create_chroma
 
-if TYPE_CHECKING:
-    from langchain_chroma import Chroma
-
 _LCD_QUERY_PATTERNS: list[re.Pattern[str]] = [
     re.compile(p, re.IGNORECASE)
     for p in [
-        r"\blcd\b",
+        r"\blcds?\b",
         r"\blocal coverage determination\b",
         r"\bcoverage determination\b",
         r"\bncd\b",
@@ -36,9 +33,19 @@ _LCD_QUERY_PATTERNS: list[re.Pattern[str]] = [
         r"\bwps\b",
         r"\bpalmetto\b",
         r"\bnoridian\b",
-        r"\bcgs\b",
         # Jurisdiction codes
         r"\b[jJ][a-lA-L]\b",
+        # Coverage + specific therapy patterns common in LCD queries
+        r"\bcovered?\b.{0,40}\b(?:wound|hyperbaric|oxygen therapy|infusion|"
+        r"imaging|MRI|CT scan|ultrasound|physical therapy|"
+        r"cardiac rehab|chiropractic|acupuncture)\b",
+        r"\bcoverage\b.{0,30}\b(?:wound|hyperbaric|oxygen|infusion|"
+        r"imaging|MRI|CT|physical therapy|cardiac|"
+        r"chiropractic|acupuncture|prosthetic|orthotic)\b",
+        # Reverse: therapy term then coverage verb
+        r"\b(?:wound|hyperbaric|oxygen therapy|infusion|"
+        r"imaging|MRI|CT scan|physical therapy|cardiac rehab)"
+        r"\b.{0,40}\bcovered?\b",
     ]
 ]
 
@@ -81,8 +88,10 @@ def expand_lcd_query(query: str) -> list[str]:
     return queries
 
 
-def _deduplicate_docs(doc_lists: list[list[Document]], max_k: int) -> list[Document]:
-    """Merge multiple document lists, preserving order and removing duplicates by doc_id+chunk_index."""
+def _deduplicate_docs(
+    doc_lists: list[list[Document]], max_k: int,
+) -> list[Document]:
+    """Merge doc lists, preserving order and deduplicating by doc_id+chunk_index."""
     seen: set[str] = set()
     merged: list[Document] = []
     for docs in doc_lists:
