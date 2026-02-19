@@ -36,7 +36,7 @@ _LCD_QUERY_PATTERNS: list[re.Pattern[str]] = [
         # Jurisdiction codes
         r"\b[jJ][a-lA-L]\b",
         # Coverage + specific therapy patterns common in LCD queries
-        r"\bcovered?\b.{0,40}\b(?:wound|hyperbaric|oxygen therapy|infusion|"
+        r"\bcover(?:ed)?\b.{0,40}\b(?:wound|hyperbaric|oxygen therapy|infusion|"
         r"imaging|MRI|CT scan|ultrasound|physical therapy|"
         r"cardiac rehab|chiropractic|acupuncture)\b",
         r"\bcoverage\b.{0,30}\b(?:wound|hyperbaric|oxygen|infusion|"
@@ -45,7 +45,7 @@ _LCD_QUERY_PATTERNS: list[re.Pattern[str]] = [
         # Reverse: therapy term then coverage verb
         r"\b(?:wound|hyperbaric|oxygen therapy|infusion|"
         r"imaging|MRI|CT scan|physical therapy|cardiac rehab)"
-        r"\b.{0,40}\bcovered?\b",
+        r"\b.{0,40}\bcover(?:ed)?\b",
     ]
 ]
 
