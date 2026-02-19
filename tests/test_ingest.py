@@ -10,7 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from medicare_rag.ingest.chunk import _is_code_doc, chunk_documents
+from medicare_rag.ingest import extract
 from medicare_rag.ingest.extract import (
+    _cell_to_text,
+    _ensure_csv_field_size_limit,
     _extract_mcd_zip,
     _format_date_yyyymmdd,
     _html_to_text,
@@ -41,7 +44,9 @@ def test_is_mcd_long_text_key() -> None:
     assert _is_mcd_long_text_key("Body") is True
     assert _is_mcd_long_text_key("policy_text") is True
     assert _is_mcd_long_text_key("coverage_criteria") is True
+    assert _is_mcd_long_text_key("NarrativeText") is True
     assert _is_mcd_long_text_key("policy_date") is False
+    assert _is_mcd_long_text_key("policy_datetime") is False
     assert _is_mcd_long_text_key("Effective_Date") is False
     assert _is_mcd_long_text_key("LCD_ID") is False
     assert _is_mcd_long_text_key("") is False
@@ -52,6 +57,68 @@ def test_html_to_text() -> None:
     result = _html_to_text("<div><b>Foo</b> bar</div>")
     assert "Foo" in result and "bar" in result
     assert _html_to_text("") == ""
+
+
+def test_html_to_text_preserves_tables_as_pipe_delimited() -> None:
+    """HTML tables are converted to pipe-delimited rows for LCD coverage criteria."""
+    html = (
+        "<table><tr><th>Code</th><th>Description</th></tr>"
+        "<tr><td>G0008</td><td>COVID admin</td></tr>"
+        "<tr><td>G0009</td><td>COVID admin 2-dose</td></tr></table>"
+    )
+    result = _html_to_text(html)
+    assert "|" in result
+    assert "Code" in result and "Description" in result
+    assert "G0008" in result and "COVID admin" in result
+    assert "G0009" in result and "COVID admin 2-dose" in result
+    # Rows should be on separate lines with cells pipe-separated
+    lines = [line.strip() for line in result.splitlines() if line.strip()]
+    assert len(lines) >= 2
+    assert any("G0008" in line and "COVID admin" in line for line in lines)
+
+
+def test_cell_to_text_html_empty_returns_none() -> None:
+    """HTML that parses to empty text (e.g. empty table) returns None."""
+    assert _cell_to_text("Body", "<table><tr><td></td></tr></table>") is None
+    assert _cell_to_text("policy", "<p>   \n  </p>") is None
+
+
+def test_cell_to_text_large_non_html_long_text_included() -> None:
+    """Large non-HTML field (>500 chars) is included when key matches long-text heuristic."""
+    long_plain = "A" * 600
+    result = _cell_to_text("coverage_criteria", long_plain)
+    assert result is not None
+    assert "coverage_criteria:" in result
+    assert long_plain in result
+    # Non-long-text key with >500 chars is dropped
+    assert _cell_to_text("LCD_ID", "x" * 600) is None
+
+
+def test_ensure_csv_field_size_limit_overflow_error_halving() -> None:
+    """When csv.field_size_limit raises OverflowError, halving loop retries until success."""
+    previous_limit = csv.field_size_limit()
+    extract._CSV_FIELD_LIMIT_INITIALIZED = False  # noqa: SLF001
+    try:
+        real_limit = csv.field_size_limit
+        setter_calls: list[int] = []
+
+        def mock_limit(desired: int | None = None) -> int | None:
+            if desired is None:
+                return real_limit()
+            setter_calls.append(desired)
+            if len(setter_calls) == 1:
+                raise OverflowError("platform limit")
+            real_limit(desired)
+            return None
+
+        with patch("medicare_rag.ingest.extract.csv.field_size_limit", mock_limit):
+            limit = _ensure_csv_field_size_limit()
+        assert limit == real_limit()
+        assert len(setter_calls) >= 2
+        assert setter_calls[0] > setter_calls[1]
+    finally:
+        csv.field_size_limit(previous_limit)
+        extract._CSV_FIELD_LIMIT_INITIALIZED = False  # noqa: SLF001
 
 
 def test_format_date_yyyymmdd() -> None:
@@ -180,9 +247,10 @@ def test_extract_mcd_handles_large_csv_fields(tmp_path: Path) -> None:
         out = out_txt.read_text()
         assert "Body:" in out
         assert "Policy text" in out
-        assert csv.field_size_limit() > 200_000
+        assert csv.field_size_limit() >= 10 * 1024 * 1024
     finally:
         csv.field_size_limit(previous_limit)
+        extract._CSV_FIELD_LIMIT_INITIALIZED = False  # noqa: SLF001
 
 
 # --- HCPCS extraction (fixed-width lines) ---

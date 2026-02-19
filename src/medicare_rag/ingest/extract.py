@@ -51,7 +51,9 @@ def _ensure_csv_field_size_limit() -> int:
         try:
             csv.field_size_limit(desired)
             _CSV_FIELD_LIMIT_INITIALIZED = True
-            return csv.field_size_limit()
+            limit = csv.field_size_limit()
+            logger.info("CSV field size limit set to %d bytes", limit)
+            return limit
         except OverflowError:
             desired = int(desired / 2)
     current_limit = csv.field_size_limit()
@@ -64,7 +66,7 @@ def _ensure_csv_field_size_limit() -> int:
     return current_limit
 
 
-_MCD_LONG_TEXT_KEY_TOKENS = (
+_MCD_LONG_TEXT_KEY_TOKEN_SET = frozenset({
     "body",
     "text",
     "policy",
@@ -80,8 +82,9 @@ _MCD_LONG_TEXT_KEY_TOKENS = (
     "explanation",
     "note",
     "comment",
-)
-_MCD_LONG_TEXT_KEY_TOKEN_SET = frozenset(_MCD_LONG_TEXT_KEY_TOKENS)
+    "narrative",
+    "narrativetext",
+})
 
 
 def _is_mcd_long_text_key(k: str) -> bool:
@@ -95,6 +98,8 @@ def _is_mcd_long_text_key(k: str) -> bool:
     if not kl:
         return False
     if kl.endswith("_date") or kl.endswith(" date"):
+        return False
+    if kl.endswith("_datetime") or kl.endswith(" datetime"):
         return False
     tokens = re.split(r"[^a-z0-9]+", kl)
     return any(t in _MCD_LONG_TEXT_KEY_TOKEN_SET for t in tokens if t)
@@ -257,6 +262,17 @@ def _html_to_text(html: str) -> str:
     if not html or not html.strip():
         return ""
     soup = BeautifulSoup(html, "html.parser")
+    # Convert tables to pipe-delimited rows so LCD coverage criteria tables stay readable
+    for table in soup.find_all("table"):
+        rows = []
+        for tr in table.find_all("tr"):
+            cells = [
+                cell.get_text(separator=" ", strip=True)
+                for cell in tr.find_all(["th", "td"])
+            ]
+            if cells:
+                rows.append(" | ".join(cells))
+        table.replace_with("\n".join(rows))
     return soup.get_text(separator="\n", strip=True)
 
 
@@ -268,6 +284,11 @@ def _cell_to_text(k: str, v: str) -> str | None:
     if "<" in s and ">" in s:
         txt = _html_to_text(s)
         if not txt:
+            logger.debug(
+                "HTML field %r parsed to empty text (%d raw chars)",
+                k,
+                len(s),
+            )
             return None
         if _is_mcd_long_text_key(k):
             return f"{k}:\n{txt}"
