@@ -341,9 +341,14 @@ def get_hybrid_retriever(
     k: int = 8,
     metadata_filter: dict | None = None,
 ) -> HybridRetriever:
-    """Convenience constructor that wires up embeddings and Chroma store."""
+    """Convenience constructor that wires up embeddings and Chroma store.
+
+    Raises ImportError if rank-bm25 is not installed, so callers (e.g.
+    get_retriever) can catch it and fall back to a non-hybrid retriever.
+    """
     if not _HAS_BM25:
         raise ImportError("rank-bm25 is required for hybrid retrieval")
+
     from medicare_rag.index import get_embeddings, get_or_create_chroma
 
     embeddings = get_embeddings()

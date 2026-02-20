@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from langchain_core.documents import Document
 
 from medicare_rag.query.expand import (
@@ -439,3 +441,11 @@ class TestGetRetrieverIntegration:
 
         assert retriever is mock_factory.return_value
         mock_factory.assert_called_once_with(k=10, metadata_filter={"source": "iom"})
+
+    def test_get_hybrid_retriever_raises_when_bm25_unavailable(self):
+        """When rank-bm25 is missing, get_hybrid_retriever raises so get_retriever can fall back."""
+        from medicare_rag.query.hybrid import get_hybrid_retriever
+
+        with patch("medicare_rag.query.hybrid._HAS_BM25", False):
+            with pytest.raises(ImportError, match="rank-bm25 is required for hybrid retrieval"):
+                get_hybrid_retriever(k=5)
