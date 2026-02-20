@@ -125,6 +125,7 @@ RRF_K = _safe_positive_int("RRF_K", 60)
 
 # Cross-source retrieval: ensure results span multiple source types
 CROSS_SOURCE_MIN_PER_SOURCE = _safe_positive_int("CROSS_SOURCE_MIN_PER_SOURCE", 2)
+MAX_QUERY_VARIANTS = _safe_positive_int("MAX_QUERY_VARIANTS", 6)
 
 # Phase 4: local LLM (Hugging Face pipeline, runs with sentence-transformers stack)
 LOCAL_LLM_MODEL = os.environ.get(

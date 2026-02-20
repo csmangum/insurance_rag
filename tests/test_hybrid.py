@@ -1,5 +1,6 @@
 """Tests for hybrid retriever, cross-source query expansion, and BM25 index."""
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -207,6 +208,69 @@ class TestBM25Index:
         idx.ensure_built(collection)
         collection.get.assert_not_called()
 
+    def test_concurrent_ensure_built(self):
+        """Multiple threads calling ensure_built simultaneously build index once."""
+        docs = [
+            _doc("first doc", "iom", "d1"),
+            _doc("second doc", "mcd", "d2"),
+            _doc("third doc", "codes", "d3"),
+        ]
+        collection = self._make_collection(docs)
+        idx = BM25Index()
+        results: list[list[Document]] = []
+
+        def run_ensure_and_search():
+            idx.ensure_built(collection)
+            results.append(idx.search("doc", k=3))
+
+        threads = [threading.Thread(target=run_ensure_and_search) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert idx._doc_count == 3
+        for r in results:
+            assert len(r) >= 1
+            assert all("doc" in d.page_content.lower() for d in r)
+
+    def test_bm25_build_with_paginated_collection(self):
+        """BM25 index builds correctly when collection.get returns multiple batches."""
+        docs = [
+            _doc("batch one first", "iom", "d1"),
+            _doc("batch one second", "iom", "d2"),
+            _doc("batch two first", "mcd", "d3"),
+            _doc("batch two second", "mcd", "d4"),
+            _doc("unique token xyz", "codes", "d5"),
+        ]
+        mock = MagicMock()
+        mock.count.return_value = 5
+        batch_size = 2
+        mock.get.side_effect = [
+            {
+                "ids": [f"id_{i}" for i in range(0, 2)],
+                "documents": [docs[i].page_content for i in range(0, 2)],
+                "metadatas": [docs[i].metadata for i in range(0, 2)],
+            },
+            {
+                "ids": [f"id_{i}" for i in range(2, 4)],
+                "documents": [docs[i].page_content for i in range(2, 4)],
+                "metadatas": [docs[i].metadata for i in range(2, 4)],
+            },
+            {
+                "ids": ["id_4"],
+                "documents": [docs[4].page_content],
+                "metadatas": [docs[4].metadata],
+            },
+        ]
+        idx = BM25Index()
+        with patch("medicare_rag.query.hybrid.GET_META_BATCH_SIZE", batch_size):
+            idx.ensure_built(mock)
+        results = idx.search("xyz", k=5)
+        assert len(results) >= 1
+        assert any("xyz" in d.page_content for d in results)
+        assert idx._doc_count == 5
+
 
 # ---------------------------------------------------------------------------
 # reciprocal_rank_fusion
@@ -266,6 +330,18 @@ class TestReciprocalRankFusion:
         doc2 = _doc("chunk 1", "iom", "d1", chunk=1)
         result = reciprocal_rank_fusion([[doc1], [doc2]])
         assert len(result) == 2
+
+    def test_rrf_fallback_weight_when_fewer_weights_than_lists(self):
+        """When weights has fewer elements than result_lists, missing weights use 1.0."""
+        doc_a = _doc("A", "iom", "dA")
+        doc_b = _doc("B", "mcd", "dB")
+        doc_c = _doc("C", "codes", "dC")
+        result = reciprocal_rank_fusion(
+            [[doc_a], [doc_b], [doc_c]],
+            weights=[10.0],
+        )
+        assert len(result) == 3
+        assert result[0].metadata["doc_id"] == "dA"
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +499,19 @@ class TestHybridRetriever:
             (d.metadata["doc_id"], d.metadata["chunk_index"]) for d in results
         ]
         assert len(keys) == len(set(keys))
+
+    def test_lcd_query_with_source_filter_iom_skips_mcd_boost(self):
+        """LCD query with metadata_filter source iom does not add MCD-only searches."""
+        store = self._make_mock_store()
+        retriever = HybridRetriever(
+            store=store, k=5, metadata_filter={"source": "iom"}
+        )
+        with patch("medicare_rag.query.hybrid._bm25_index", new=BM25Index()):
+            retriever.invoke("LCD for cardiac rehab")
+        for call in store.similarity_search.call_args_list:
+            filt = call.kwargs.get("filter")
+            if filt is not None:
+                assert filt.get("source") != "mcd"
 
 
 # ---------------------------------------------------------------------------

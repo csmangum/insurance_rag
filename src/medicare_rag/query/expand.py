@@ -61,7 +61,7 @@ _CODES_PATTERNS: list[re.Pattern[str]] = [
         r"\bmodifier\b",
         r"\bdrg\b",
         r"\brevenue\s+code\b",
-        r"\b[A-Z]\d{4}\b",
+        r"\b[A-V]\d{4}\b",
     ]
 ]
 

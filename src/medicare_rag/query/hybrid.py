@@ -35,6 +35,7 @@ from medicare_rag.config import (
     HYBRID_KEYWORD_WEIGHT,
     HYBRID_SEMANTIC_WEIGHT,
     LCD_RETRIEVAL_K,
+    MAX_QUERY_VARIANTS,
     RRF_K,
 )
 from medicare_rag.index.store import get_raw_collection
@@ -57,9 +58,11 @@ def _tokenize(text: str) -> list[str]:
 class BM25Index:
     """Lazily-built, thread-safe BM25 index over documents in a Chroma collection.
 
-    The index is rebuilt when the collection size changes (new documents
-    added or removed).  Callers should use :meth:`ensure_built` which
-    checks staleness and rebuilds only when needed.
+    Staleness is detected only by document count (new documents added or
+    removed). In-place content updates to existing chunks are not detected;
+    use :meth:`force_rebuild` after re-ingesting changed content.
+    Callers should use :meth:`ensure_built` which checks staleness and
+    rebuilds only when needed.
     """
 
     def __init__(self) -> None:
@@ -72,13 +75,19 @@ class BM25Index:
         return self._index is None or current_count != self._doc_count
 
     def ensure_built(self, collection: Any) -> None:
-        """Build or rebuild the index if the collection has changed."""
+        """Build or rebuild the index if the collection size has changed."""
         count = collection.count()
         if not self._needs_rebuild(count):
             return
         with self._lock:
             if not self._needs_rebuild(count):
                 return
+            self._build(collection)
+
+    def force_rebuild(self, collection: Any) -> None:
+        """Unconditionally rebuild the index. Use after re-ingesting content
+        when document count is unchanged but chunk text has changed."""
+        with self._lock:
             self._build(collection)
 
     def _build(self, collection: Any) -> None:
@@ -127,7 +136,7 @@ class BM25Index:
         """Return the top-*k* BM25-scored documents, optionally filtered."""
         with self._lock:
             index = self._index
-            documents = list(self._documents)
+            documents = self._documents
 
         if index is None or not documents:
             return []
@@ -151,6 +160,12 @@ class BM25Index:
 
 # Module-level singleton so the BM25 index is shared across retrievers.
 _bm25_index = BM25Index()
+
+
+def reset_bm25_index() -> None:
+    """Reset the shared BM25 index (e.g. for tests). Next retrieval will rebuild."""
+    global _bm25_index
+    _bm25_index = BM25Index()
 
 
 def reciprocal_rank_fusion(
@@ -179,7 +194,7 @@ def reciprocal_rank_fusion(
     for lst_idx, doc_list in enumerate(result_lists):
         w = weights[lst_idx] if lst_idx < len(weights) else 1.0
         for rank, doc in enumerate(doc_list):
-            key = f"{doc.metadata.get('doc_id', '')}_{doc.metadata.get('chunk_index', 0)}"
+            key = f"{doc.metadata.get('doc_id', '')}\x00{doc.metadata.get('chunk_index', 0)}"
             current_score = doc_scores.get(key, (0.0, doc))[0]
             rrf_score = w / (rrf_k + rank + 1)
             doc_scores[key] = (current_score + rrf_score, doc)
@@ -239,12 +254,13 @@ def ensure_source_diversity(
                     top.pop(i)
                     displaced = True
                     break
-            if not displaced and len(top) < k:
-                pass
-            elif not displaced:
-                popped_doc = top.pop(-1)
-                popped_src = popped_doc.metadata.get("source", "")
-                source_counts[popped_src] = max(0, source_counts.get(popped_src, 0) - 1)
+            if not displaced:
+                if len(top) >= k:
+                    popped_doc = top.pop(-1)
+                    popped_src = popped_doc.metadata.get("source", "")
+                    source_counts[popped_src] = max(
+                        0, source_counts.get(popped_src, 0) - 1
+                    )
 
             top.append(promo)
             source_counts[src] = source_counts.get(src, 0) + 1
@@ -296,6 +312,8 @@ class HybridRetriever(BaseRetriever):
             for lv in lcd_variants[1:]:
                 if lv not in variants:
                     variants.append(lv)
+
+        variants = variants[:MAX_QUERY_VARIANTS]
 
         semantic_lists: list[list[Document]] = []
         keyword_lists: list[list[Document]] = []

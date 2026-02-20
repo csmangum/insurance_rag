@@ -137,7 +137,7 @@ def _deduplicate_docs(
             doc = dl[pos]
             key = (
                 f"{doc.metadata.get('doc_id', '')}"
-                f"_{doc.metadata.get('chunk_index', 0)}"
+                f"\x00{doc.metadata.get('chunk_index', 0)}"
             )
             if key not in seen:
                 seen.add(key)
