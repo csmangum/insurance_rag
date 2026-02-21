@@ -6,9 +6,31 @@ import httpx
 
 from medicare_rag.config import DOWNLOAD_TIMEOUT
 
+_ALLOWED_SCHEMES = ("http", "https")
+
+__all__ = ("DOWNLOAD_TIMEOUT",)
+
+
+def _validate_download_url(url: str) -> None:
+    """Raise ValueError if url does not use an allowed scheme (http/https only).
+
+    Prevents file:// or other schemes from being used when env/config is compromised.
+    """
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise ValueError(
+            f"Download URL scheme '{scheme or '(empty)'}' not allowed; "
+            f"only {', '.join(_ALLOWED_SCHEMES)} permitted"
+        )
+
 
 def stream_download(client: httpx.Client, url: str, dest: Path) -> None:
-    """Stream GET url to dest path. Raises on HTTP errors."""
+    """Stream GET url to dest path. Raises on HTTP errors.
+
+    Only http and https URLs are permitted; file:// and other schemes are rejected.
+    """
+    _validate_download_url(url)
     with client.stream("GET", url) as r:
         r.raise_for_status()
         with dest.open("wb") as f:
