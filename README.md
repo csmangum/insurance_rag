@@ -51,13 +51,14 @@ python scripts/download_all.py [--source iom|mcd|codes|all] [--force]
 ### 2. Ingest (extract → chunk → embed → store)
 
 ```bash
-python scripts/ingest_all.py [--source iom|mcd|codes|all] [--force] [--skip-index] [--no-summaries]
+python scripts/ingest_all.py [--source iom|mcd|codes|all] [--force] [--skip-extract] [--skip-index] [--no-summaries]
 ```
 
 - **Extract:** PDFs (pdfplumber; optional `unstructured` for image-heavy PDFs), MCD/codes from structured files. HCPCS and ICD-10-CM documents are automatically enriched with category labels, synonyms, and related terms (e.g., E-codes get "Durable Medical Equipment: wheelchair, hospital bed, oxygen equipment...") to improve semantic retrieval.
 - **Chunk:** LangChain text splitters; MCD/LCD documents use larger chunks (`LCD_CHUNK_SIZE=1500`) to preserve policy context. Metadata (source, manual, jurisdiction, etc.) is preserved.
 - **Topic summaries:** By default, document-level and topic-cluster summaries are generated (extractive, no LLM needed) and indexed alongside regular chunks. These act as stable retrieval anchors for fragmented topics. Disable with `--no-summaries`.
 - **Embed & store:** sentence-transformers (default `all-MiniLM-L6-v2`) and ChromaDB at `data/chroma/` (collection `medicare_rag`). Only new or changed chunks (by content hash) are re-embedded and upserted.
+- Use `--skip-extract` to skip extraction and only run chunking on existing processed files.
 - Use `--skip-index` to run only extract and chunk (no embedding or vector store).
 
 ### 3. Query (RAG)
@@ -73,13 +74,14 @@ python scripts/query.py [--filter-source iom|mcd|codes] [--filter-manual 100-02]
 
 ```bash
 python scripts/validate_and_eval.py                    # validate index + run retrieval eval
-python scripts/validate_and_eval.py --validate-only    # index only
+python scripts/validate_and_eval.py --validate-only   # index only
 python scripts/validate_and_eval.py --eval-only -k 10  # retrieval eval only
-python scripts/validate_and_eval.py --eval-only --json  # metrics as JSON
+python scripts/validate_and_eval.py --eval-only --json # metrics as JSON (stdout; redirect to save)
+python scripts/validate_and_eval.py --report data/eval_report.md  # write markdown report
 ```
 
 - **Validation:** Checks Chroma collection, document count, sample metadata (`doc_id`, `content_hash`), and that similarity search runs.
-- **Evaluation:** Uses `scripts/eval_questions.json` (Medicare queries with expected keywords/sources). Reports **hit rate** (relevant doc in top-k) and **MRR** (mean reciprocal rank). Edit `eval_questions.json` to extend the set. Output from `validate_and_eval.py --json` may be saved as `scripts/eval_metrics.json` and committed as a snapshot of the last run.
+- **Evaluation:** Uses `scripts/eval_questions.json` (Medicare queries with expected keywords/sources). Reports **hit rate** (relevant doc in top-k) and **MRR** (mean reciprocal rank). Edit `eval_questions.json` to extend the set. With `--json`, metrics are printed to stdout; redirect to save, e.g. `... --json > scripts/eval_metrics.json`.
 
 **Full-RAG eval (answer quality):** Run the RAG chain on the eval set and write a report for manual review:
 
@@ -269,7 +271,7 @@ Hybrid retrieval (semantic + BM25, cross-source expansion, source diversificatio
 
 4. **Improved consistency.** Rephrased query pairs now retrieve more overlapping result sets (Jaccard 0.733 vs 0.483), particularly for cardiac rehabilitation topics.
 
-5. **Fast retrieval.** Median latency of 6 ms per query with p95 at 8 ms, even on CPU.
+5. **Fast retrieval.** Baseline semantic retriever: median latency 4 ms per query with p95 at 5 ms, even on CPU.
 
 **Weaknesses and areas for improvement:**
 
@@ -320,7 +322,7 @@ Copy `.env.example` to `.env` and override as needed:
 
 ## Testing
 
-Install the dev optional dependency (includes pytest and ruff), then run:
+Install the dev optional dependency (includes pytest, ruff, and rank-bm25), then run:
 
 ```bash
 pip install -e ".[dev]"
@@ -345,7 +347,7 @@ No network or real downloads needed for the core suite; mocks are used for HTTP 
 ## Optional extras
 
 - **`pip install -e ".[ui]"`** — Streamlit for the embedding search UI.
-- **`pip install -e ".[dev]"`** — pytest (test suite) and ruff (linting/formatting). Required to run tests.
+- **`pip install -e ".[dev]"`** — pytest (test suite), ruff (linting/formatting), and rank-bm25 (hybrid retrieval). Required to run tests.
 - **`pip install -e ".[unstructured]"`** — Fallback extractor for image-heavy PDFs when pdfplumber yields little text.
 
 ## Project layout
