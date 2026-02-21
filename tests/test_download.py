@@ -367,19 +367,19 @@ def test_sanitize_filename_from_url_rejects_control_chars() -> None:
     assert sanitize_filename_from_url("https://example.com/foo%0abar", "default") == "default"
 
 
-def test_stream_download_rejects_file_scheme() -> None:
+def test_stream_download_rejects_file_scheme(tmp_path: Path) -> None:
     """stream_download rejects file:// URLs to prevent local file access when env is compromised."""
     mock_client = MagicMock()
-    dest = Path("/tmp/test.bin")
+    dest = tmp_path / "test.bin"
     with pytest.raises(ValueError, match="not allowed"):
         stream_download(mock_client, "file:///etc/passwd", dest)
     mock_client.stream.assert_not_called()
 
 
-def test_stream_download_rejects_non_http_schemes() -> None:
+def test_stream_download_rejects_non_http_schemes(tmp_path: Path) -> None:
     """stream_download rejects ftp, gopher, and other non-http(s) schemes."""
     mock_client = MagicMock()
-    dest = Path("/tmp/test.bin")
+    dest = tmp_path / "test.bin"
     for bad_url in ("ftp://example.com/file.zip", "gopher://example.com/", "data:text/plain,hello"):
         with pytest.raises(ValueError, match="not allowed"):
             stream_download(mock_client, bad_url, dest)
