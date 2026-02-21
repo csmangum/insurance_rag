@@ -18,16 +18,20 @@ src/medicare_rag/           # Main package (installed as editable via `pip insta
     codes.py                #   HCPCS + ICD-10-CM code file downloader
     _manifest.py            #   Manifest writing and SHA-256 hashing
     _utils.py               #   URL sanitization, stream_download helper, DOWNLOAD_TIMEOUT (from config)
-  ingest/                   # Phase 2: text extraction, enrichment, and chunking
+  ingest/                   # Phase 2: text extraction, enrichment, chunking, and summarization
     __init__.py             #   SourceKind type (imported by extract, chunk)
     extract.py              #   PDF/text extraction (pdfplumber, optional unstructured fallback); defusedxml for XML when available
     enrich.py               #   HCPCS/ICD-10 semantic enrichment (category labels, synonyms, related terms)
-    chunk.py                #   LangChain text splitters (uses CHUNK_SIZE, CHUNK_OVERLAP from config)
+    chunk.py                #   LangChain text splitters (uses CHUNK_SIZE, CHUNK_OVERLAP from config); orchestrates summary generation
+    cluster.py              #   Topic clustering via keyword patterns (loads topic_definitions.json)
+    summarize.py            #   Extractive document-level and topic-cluster summaries (TF-IDF scoring, no LLM)
   index/                    # Phase 3: embedding and vector store
     embed.py                #   sentence-transformers embeddings
     store.py                #   ChromaDB upsert, incremental by content hash
   query/                    # Phase 4: retrieval and RAG chain
-    retriever.py            #   Chroma-backed retriever
+    retriever.py            #   LCD-aware retriever, topic-summary boosting
+    expand.py               #   Cross-source query expansion and Medicare domain synonyms
+    hybrid.py               #   Hybrid semantic+BM25 retriever with RRF and source diversification
     chain.py                #   Local LLM (HuggingFace) RAG chain
 scripts/                    # CLI entry points
   download_all.py           #   Bulk download (--source iom|mcd|codes|all, --force)
@@ -41,8 +45,12 @@ tests/                      # Unit tests (pytest; install with pip install -e ".
   test_download.py          #   Mocked HTTP, idempotency, zip-slip and URL sanitization
   test_ingest.py            #   Extraction and chunking tests (including enrichment integration)
   test_enrich.py            #   HCPCS/ICD-10-CM semantic enrichment tests
+  test_cluster.py           #   Topic clustering (definitions, assignment, tagging)
+  test_summarize.py         #   Document-level and topic-cluster summary generation
   test_index.py             #   Chroma/embedding and get_raw_collection tests (skipped when Chroma unavailable)
-  test_query.py             #   Retriever and chain tests
+  test_query.py             #   LCD query detection, expansion, LCDAwareRetriever
+  test_hybrid.py            #   BM25 index, RRF fusion, source diversification, HybridRetriever
+  test_retriever_boost.py   #   Topic-summary injection and boosting
   test_search_validation.py #   Search/validation tests
   test_app.py               #   Streamlit app helpers (escape, filters; requires .[ui])
 data/                       # Runtime data directory (gitignored)
@@ -84,7 +92,7 @@ Tests use `unittest.mock` to mock HTTP calls and external dependencies. No netwo
 
 ## Key Conventions
 
-- **Configuration** is centralized in `src/medicare_rag/config.py`. It reads from environment variables (via `python-dotenv`) with sensible defaults. Numeric settings (e.g. `LOCAL_LLM_MAX_NEW_TOKENS`, `CHUNK_SIZE`) use safe parsing: invalid values log a warning and fall back to the default. Override paths with `DATA_DIR`, model settings with `EMBEDDING_MODEL`, `LOCAL_LLM_MODEL`; tuning with `DOWNLOAD_TIMEOUT`, `CHUNK_SIZE`, `CHUNK_OVERLAP`, `CHROMA_UPSERT_BATCH_SIZE`, `GET_META_BATCH_SIZE`.
+- **Configuration** is centralized in `src/medicare_rag/config.py`. It reads from environment variables (via `python-dotenv`) with sensible defaults. Numeric settings (e.g. `LOCAL_LLM_MAX_NEW_TOKENS`, `CHUNK_SIZE`) use safe parsing: invalid values log a warning and fall back to the default. Override paths with `DATA_DIR`, model settings with `EMBEDDING_MODEL`, `LOCAL_LLM_MODEL`; tuning with `DOWNLOAD_TIMEOUT`, `CHUNK_SIZE`, `CHUNK_OVERLAP`, `LCD_CHUNK_SIZE`, `LCD_CHUNK_OVERLAP`, `LCD_RETRIEVAL_K`, `HYBRID_SEMANTIC_WEIGHT`, `HYBRID_KEYWORD_WEIGHT`, `RRF_K`, `CROSS_SOURCE_MIN_PER_SOURCE`, `ENABLE_TOPIC_SUMMARIES`, `CHROMA_UPSERT_BATCH_SIZE`, `GET_META_BATCH_SIZE`. See `.env.example` for the full list.
 - **Idempotent operations**: downloads check for existing manifests/files before re-downloading. Index upserts are incremental by content hash. Use `--force` to override.
 - **Manifests**: each download source writes a `manifest.json` with source URL, download date, and file list (with optional SHA-256 hashes).
 - **No API keys**: the system uses local sentence-transformers for embeddings and a local HuggingFace model (default: TinyLlama) for generation. No external API calls for inference.
@@ -98,3 +106,5 @@ Tests use `unittest.mock` to mock HTTP calls and external dependencies. No netwo
 - LLM default: `TinyLlama/TinyLlama-1.1B-Chat-v1.0` (configurable via env)
 - Tests follow the pattern: fixture creates `tmp_path`, mocks are applied via `unittest.mock.patch`, assertions verify file creation and manifest contents
 - The Streamlit app and index store use `get_raw_collection(store)` from `index.store` to access the Chroma wrapper's underlying collection for batched metadata and dimension checks; this wraps the private `_collection` API and may need updating if langchain-chroma changes.
+- The hybrid retriever (`query/hybrid.py`) maintains a module-level singleton `BM25Index` that is lazily built from the Chroma collection and checked for staleness by document count. Use `reset_bm25_index()` in tests to avoid state leaking between test cases.
+- Topic definitions for clustering are loaded from `DATA_DIR/topic_definitions.json` if present, otherwise from the package default at `src/medicare_rag/data/topic_definitions.json`. Add new topics by extending the JSON file.
