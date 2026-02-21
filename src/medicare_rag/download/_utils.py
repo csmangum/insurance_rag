@@ -19,7 +19,7 @@ def _validate_download_url(url: str) -> None:
     if scheme not in _ALLOWED_SCHEMES:
         raise ValueError(
             f"Download URL scheme '{scheme or '(empty)'}' not allowed; "
-            f"only {_ALLOWED_SCHEMES} permitted"
+            f"only {', '.join(_ALLOWED_SCHEMES)} permitted"
         )
 
 
