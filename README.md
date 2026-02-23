@@ -46,7 +46,7 @@ python scripts/download_all.py [--source iom|mcd|codes|all] [--force]
 
 - **Sources:** `iom` (IOM manuals), `mcd` (MCD bulk ZIP), `codes` (HCPCS + optional ICD-10-CM), or `all`.
 - **Idempotent:** Skips when manifest and files exist; use `--force` to re-download.
-- Output: `data/raw/<source>/` plus a `manifest.json` per source (URL, date, file list, optional SHA-256). Set `ICD10_CM_ZIP_URL` in `.env` if you want ICD-10-CM (see [CDC](https://www.cms.gov/nchs/icd/icd-10-cm.htm)).
+- Output: `data/raw/<source>/` plus a `manifest.json` per source (URL, date, file list, optional SHA-256). Set `ICD10_CM_ZIP_URL` in `.env` if you want ICD-10-CM (see [CDC ICD-10-CM](https://www.cdc.gov/nchs/icd/icd-10-cm/index.html) or the ZIP URL in `.env.example`).
 
 ### 2. Ingest (extract → chunk → embed → store)
 
@@ -77,7 +77,7 @@ python scripts/validate_and_eval.py                    # validate index + run re
 python scripts/validate_and_eval.py --validate-only   # index only
 python scripts/validate_and_eval.py --eval-only -k 10  # retrieval eval only
 python scripts/validate_and_eval.py --eval-only --json # metrics as JSON (stdout; redirect to save)
-python scripts/validate_and_eval.py --report data/eval_report.md  # write markdown report
+python scripts/validate_and_eval.py --report data/eval_report.md  # write markdown report (requires eval, not --validate-only)
 ```
 
 - **Validation:** Checks Chroma collection, document count, sample metadata (`doc_id`, `content_hash`), and that similarity search runs.
@@ -295,7 +295,7 @@ Hybrid retrieval (semantic + BM25, cross-source expansion, source diversificatio
 
 6. ~~**Improve cross-source retrieval.**~~ **Done.** The dev branch adds a hybrid retriever (semantic + BM25 with RRF, cross-source query expansion, and source diversification). Hit rate improved from 76.2% to 87.3% (k=8); install with `pip install -e ".[dev]"` for the `rank-bm25` dependency.
 
-7. **Boost consistency.** For topics with fragmented content (like cardiac rehab), consider adding document-level summaries or topic clusters to improve retrieval stability across rephrasings.
+7. ~~**Boost consistency.**~~ **Done.** Document-level and topic-cluster summaries are already generated at ingest time and boost retrieval consistency across rephrasings.
 
 ## Configuration
 
@@ -363,3 +363,11 @@ No network or real downloads needed for the core suite; mocks are used for HTTP 
 - **`data/`** — Runtime data (gitignored): `raw/`, `processed/`, `chroma/`.
 
 See **AGENTS.md** for detailed layout, conventions, and patterns.
+
+## Documentation
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — How to run tests, ruff, and contribute.
+- **[docs/troubleshooting.md](docs/troubleshooting.md)** — Common issues and fixes.
+- **[docs/eval_questions.md](docs/eval_questions.md)** — Eval question schema and how to run evaluation.
+- **[docs/topic_definitions.md](docs/topic_definitions.md)** — Topic definitions for clustering and summary boosting.
+- **[docs/data_sources.md](docs/data_sources.md)** — External data URLs and formats.

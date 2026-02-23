@@ -11,7 +11,7 @@ flowchart TB
   subgraph UI["User Interfaces"]
     CLI["CLI REPL\n(scripts/query.py)"]
     Streamlit["Streamlit App\n(app.py)"]
-    Eval["Eval Scripts\n(scripts/validate_and_eval.py)"]
+    Eval["Eval Scripts\n(validate_and_eval.py,\nrun_rag_eval.py)"]
   end
 
   subgraph P4["Phase 4: Query & RAG"]
@@ -72,10 +72,9 @@ flowchart LR
       IOM4["manifest.json"]
     end
     subgraph MCD["mcd/"]
-      MCD1["current_lcd.zip"]
-      MCD2["ncd.zip"]
-      MCD3["..."]
-      MCD4["manifest.json"]
+      MCD0["all_data.zip\n(extracts to inner ZIPs)"]
+      MCD1["current_lcd.zip, ncd.zip,\ncurrent_article.zip, ..."]
+      MCD2["manifest.json"]
     end
     subgraph Codes["codes/"]
       C1["hcpcs/ (ZIP)"]
@@ -95,7 +94,7 @@ flowchart LR
 |--------|--------|---------|--------|
 | **IOM** (Internet-Only Manuals) | `download/iom.py` | Medicare Benefit Policy (100-02), NCD (100-03), Claims Processing (100-04) | Chapter PDFs scraped from CMS index pages |
 | **MCD** (Medicare Coverage Database) | `download/mcd.py` | LCDs, NCDs, Articles | Single bulk ZIP containing inner ZIPs with CSV data |
-| **Codes** | `download/codes.py` | HCPCS Level II codes, optional ICD-10-CM | HCPCS ZIP from CMS quarterly page; ICD-10-CM from CDC (env-configured URL) |
+| **Codes** | `download/codes.py` | HCPCS Level II codes, optional ICD-10-CM | HCPCS ZIP from CMS quarterly page; ICD-10-CM from env-configured URL (CMS or CDC; see `.env.example`) |
 
 **Key design decisions:**
 - All HTTP uses `httpx` with streaming for large files and a shared timeout (default 60s, overridable via `DOWNLOAD_TIMEOUT`)
@@ -418,7 +417,7 @@ Fragmented content (e.g., cardiac rehabilitation spread across multiple IOM chap
 
 ## Evaluation Framework
 
-The system includes a comprehensive retrieval evaluation suite driven by `scripts/eval_questions.json` (60 Medicare-focused questions with expected keywords, sources, categories, and difficulty levels).
+The system includes a comprehensive retrieval evaluation suite driven by `scripts/eval_questions.json` (79 Medicare-focused questions with expected keywords, sources, categories, and difficulty levels).
 
 **Metrics computed:**
 - **Hit Rate** — fraction of questions where at least one fully relevant document appears in top-k
