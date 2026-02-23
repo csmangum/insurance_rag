@@ -73,7 +73,26 @@ python scripts/validate_and_eval.py --eval-only --json
 
 # Write markdown report
 python scripts/validate_and_eval.py --eval-only --report data/eval_report.md
+
+# Regression gate: fail if metrics drop below baseline (e.g. in CI)
+python scripts/validate_and_eval.py --eval-only --baseline scripts/eval_baseline.json
+
+# Update baseline after a good run (then commit eval_baseline.json)
+python scripts/validate_and_eval.py --eval-only --save-baseline scripts/eval_baseline.json
 ```
+
+### Regression gate
+
+The script can compare the current run to a stored baseline and exit with status 1 if any of **hit rate**, **MRR**, **avg precision@k**, or **avg recall@k** drop below the baseline. Use this in CI to catch retrieval regressions.
+
+- **Baseline file:** `scripts/eval_baseline.json` (committed). It may contain zeros until you run once with `--save-baseline` (see below).
+- **To enable the gate:** Run a full eval after a known-good state, then:
+  ```bash
+  python scripts/validate_and_eval.py --eval-only --save-baseline scripts/eval_baseline.json
+  ```
+  Commit the updated `eval_baseline.json`. Future runs with `--baseline scripts/eval_baseline.json` will fail if metrics regress.
+- **CI example:** Run `validate_and_eval.py --eval-only --baseline scripts/eval_baseline.json` (and use the same `-k` as when the baseline was saved, default 5).
+- **Comparing k:** The baseline stores `k`; the run must use the same `k` or the comparison is skipped and the script exits 1 (to avoid comparing different k settings).
 
 ### Full RAG eval (answer quality)
 

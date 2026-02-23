@@ -22,6 +22,8 @@ Usage:
   python scripts/validate_and_eval.py --eval-only --filter-source iom
   python scripts/validate_and_eval.py --json       # machine-readable metrics
   python scripts/validate_and_eval.py --eval-only --k-values 1,3,5,10  # multi-k sweep
+  python scripts/validate_and_eval.py --eval-only --baseline scripts/eval_baseline.json   # regression gate
+  python scripts/validate_and_eval.py --eval-only --save-baseline scripts/eval_baseline.json   # update baseline
 """
 import argparse
 import json
@@ -754,6 +756,54 @@ def run_eval(
 
 
 # ---------------------------------------------------------------------------
+# Regression baseline
+# ---------------------------------------------------------------------------
+
+def _baseline_from_metrics(metrics: dict, k: int) -> dict:
+    """Extract a minimal baseline dict for regression comparison."""
+    return {
+        "k": k,
+        "n_questions": metrics.get("n_questions", 0),
+        "hit_rate": round(metrics.get("hit_rate", 0.0), 4),
+        "mrr": round(metrics.get("mrr", 0.0), 4),
+        "avg_precision_at_k": round(metrics.get("avg_precision_at_k", 0.0), 4),
+        "avg_recall_at_k": round(metrics.get("avg_recall_at_k", 0.0), 4),
+    }
+
+
+def save_baseline(metrics: dict, k: int, path: Path) -> None:
+    """Write baseline JSON for future regression checks."""
+    baseline = _baseline_from_metrics(metrics, k)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(baseline, f, indent=2)
+    logger.info("Baseline saved to %s (hit_rate=%.2f%%, mrr=%.4f)", path, baseline["hit_rate"] * 100, baseline["mrr"])
+
+
+def compare_to_baseline(current: dict, baseline_path: Path, k: int) -> tuple[bool, list[str]]:
+    """Compare current metrics to baseline. Return (passed, list of error messages)."""
+    if not baseline_path.exists():
+        return False, [f"Baseline file not found: {baseline_path}"]
+    with open(baseline_path, encoding="utf-8") as f:
+        baseline = json.load(f)
+    base_k = baseline.get("k", k)
+    if base_k != k:
+        return False, [f"Baseline k={base_k} does not match current k={k}; re-run with -k {base_k} or update baseline."]
+    errors: list[str] = []
+    curr_base = _baseline_from_metrics(current, k)
+    for key in ("hit_rate", "mrr", "avg_precision_at_k", "avg_recall_at_k"):
+        curr_val = curr_base.get(key, 0.0)
+        base_val = baseline.get(key, 0.0)
+        if curr_val < base_val:
+            errors.append(
+                f"Regression: {key} = {curr_val:.4f} (baseline {base_val:.4f})"
+            )
+    if errors:
+        return False, errors
+    return True, []
+
+
+# ---------------------------------------------------------------------------
 # Report formatting
 # ---------------------------------------------------------------------------
 
@@ -1098,6 +1148,20 @@ def main() -> int:
         metavar="PATH",
         help="Write a markdown report to PATH (e.g. data/eval_report.md).",
     )
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Path to baseline JSON; exit 1 if eval metrics regress vs baseline.",
+    )
+    parser.add_argument(
+        "--save-baseline",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="After eval, save current metrics as baseline to PATH.",
+    )
     args = parser.parse_args()
 
     if args.json:
@@ -1204,6 +1268,21 @@ def main() -> int:
             else:
                 for line in _format_report(metrics):
                     logger.info(line)
+
+            # Regression gate: compare to baseline
+            if args.baseline:
+                passed, errs = compare_to_baseline(metrics, args.baseline, args.k)
+                if not passed:
+                    for msg in errs:
+                        logger.error("Baseline check: %s", msg)
+                    if args.json:
+                        print(json.dumps(all_output, indent=2, default=str))
+                    return 1
+                logger.info("Baseline check passed (no regression)")
+
+            # Save baseline for future regression runs
+            if args.save_baseline:
+                save_baseline(metrics, args.k, args.save_baseline)
         finally:
             # Clean up temp file if created
             if temp_eval_path and temp_eval_path.exists():
