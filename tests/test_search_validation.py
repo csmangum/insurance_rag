@@ -799,6 +799,93 @@ class TestReportFormatting:
 
 
 # ---------------------------------------------------------------------------
+# Regression baseline tests
+# ---------------------------------------------------------------------------
+
+class TestRegressionBaseline:
+
+    def test_baseline_from_metrics_has_required_keys(self, mod):
+        metrics = {
+            "n_questions": 10,
+            "hit_rate": 0.8,
+            "mrr": 0.65,
+            "avg_precision_at_k": 0.4,
+            "avg_recall_at_k": 0.5,
+        }
+        baseline = mod._baseline_from_metrics(metrics, k=5)
+        assert baseline["k"] == 5
+        assert baseline["n_questions"] == 10
+        assert baseline["hit_rate"] == 0.8
+        assert baseline["mrr"] == 0.65
+        assert baseline["avg_precision_at_k"] == 0.4
+        assert baseline["avg_recall_at_k"] == 0.5
+
+    def test_save_baseline_writes_readable_json(self, mod, tmp_path):
+        path = tmp_path / "baseline.json"
+        metrics = {"n_questions": 3, "hit_rate": 0.67, "mrr": 0.5, "avg_precision_at_k": 0.3, "avg_recall_at_k": 0.4}
+        mod.save_baseline(metrics, k=5, path=path)
+        assert path.exists()
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["k"] == 5
+        assert data["hit_rate"] == 0.67
+        assert data["mrr"] == 0.5
+
+    def test_compare_to_baseline_passes_when_no_regression(self, mod, tmp_path):
+        baseline_path = tmp_path / "baseline.json"
+        baseline_path.write_text(
+            json.dumps({
+                "k": 5,
+                "n_questions": 10,
+                "hit_rate": 0.7,
+                "mrr": 0.6,
+                "avg_precision_at_k": 0.35,
+                "avg_recall_at_k": 0.45,
+            }),
+            encoding="utf-8",
+        )
+        current = {"hit_rate": 0.8, "mrr": 0.65, "avg_precision_at_k": 0.4, "avg_recall_at_k": 0.5}
+        passed, errs = mod.compare_to_baseline(current, baseline_path, k=5)
+        assert passed is True
+        assert errs == []
+
+    def test_compare_to_baseline_fails_on_regression(self, mod, tmp_path):
+        baseline_path = tmp_path / "baseline.json"
+        baseline_path.write_text(
+            json.dumps({
+                "k": 5,
+                "n_questions": 10,
+                "hit_rate": 0.8,
+                "mrr": 0.7,
+                "avg_precision_at_k": 0.4,
+                "avg_recall_at_k": 0.5,
+            }),
+            encoding="utf-8",
+        )
+        current = {"hit_rate": 0.75, "mrr": 0.7, "avg_precision_at_k": 0.4, "avg_recall_at_k": 0.5}
+        passed, errs = mod.compare_to_baseline(current, baseline_path, k=5)
+        assert passed is False
+        assert any("hit_rate" in e for e in errs)
+
+    def test_compare_to_baseline_fails_when_baseline_missing(self, mod, tmp_path):
+        passed, errs = mod.compare_to_baseline({}, tmp_path / "nonexistent.json", k=5)
+        assert passed is False
+        assert len(errs) == 1
+        assert "not found" in errs[0].lower()
+
+    def test_compare_to_baseline_fails_on_k_mismatch(self, mod, tmp_path):
+        baseline_path = tmp_path / "baseline.json"
+        baseline_path.write_text(
+            json.dumps({"k": 5, "hit_rate": 0.8, "mrr": 0.7, "avg_precision_at_k": 0.4, "avg_recall_at_k": 0.5}),
+            encoding="utf-8",
+        )
+        current = {"hit_rate": 0.9, "mrr": 0.8, "avg_precision_at_k": 0.5, "avg_recall_at_k": 0.6}
+        passed, errs = mod.compare_to_baseline(current, baseline_path, k=10)
+        assert passed is False
+        assert any("k=" in e for e in errs)
+
+
+# ---------------------------------------------------------------------------
 # Eval questions file schema test
 # ---------------------------------------------------------------------------
 

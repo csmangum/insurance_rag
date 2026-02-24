@@ -46,7 +46,7 @@ python scripts/download_all.py [--source iom|mcd|codes|all] [--force]
 
 - **Sources:** `iom` (IOM manuals), `mcd` (MCD bulk ZIP), `codes` (HCPCS + optional ICD-10-CM), or `all`.
 - **Idempotent:** Skips when manifest and files exist; use `--force` to re-download.
-- Output: `data/raw/<source>/` plus a `manifest.json` per source (URL, date, file list, optional SHA-256). Set `ICD10_CM_ZIP_URL` in `.env` if you want ICD-10-CM (see [CDC](https://www.cms.gov/nchs/icd/icd-10-cm.htm)).
+- Output: `data/raw/<source>/` plus a `manifest.json` per source (URL, date, file list, optional SHA-256). Set `ICD10_CM_ZIP_URL` in `.env` if you want ICD-10-CM (see [CDC ICD-10-CM](https://www.cdc.gov/nchs/icd/icd-10-cm/index.html) or the ZIP URL in `.env.example`).
 
 ### 2. Ingest (extract → chunk → embed → store)
 
@@ -77,7 +77,7 @@ python scripts/validate_and_eval.py                    # validate index + run re
 python scripts/validate_and_eval.py --validate-only   # index only
 python scripts/validate_and_eval.py --eval-only -k 10  # retrieval eval only
 python scripts/validate_and_eval.py --eval-only --json # metrics as JSON (stdout; redirect to save)
-python scripts/validate_and_eval.py --report data/eval_report.md  # write markdown report
+python scripts/validate_and_eval.py --report data/eval_report.md  # write markdown report (requires eval, not --validate-only)
 ```
 
 - **Validation:** Checks Chroma collection, document count, sample metadata (`doc_id`, `content_hash`), and that similarity search runs.
@@ -89,7 +89,9 @@ python scripts/validate_and_eval.py --report data/eval_report.md  # write markdo
 python scripts/run_rag_eval.py [--eval-file scripts/eval_questions.json] [--out data/rag_eval_report.md] [-k 8]
 ```
 
-The latest report is written to `data/rag_eval_report.md` and includes answer-quality heuristics (e.g. avg keyword coverage 56.9%, % answers with citations 6%, repetition ratio, length) for manual assessment.
+The latest report is written to `data/rag_eval_report.md` and includes answer-quality heuristics for manual assessment.
+
+**Results and analysis:** See **[EVAL_RESULTS.md](EVAL_RESULTS.md)** for the full evaluation suite (unit tests, index validation, retrieval metrics, RAG answer quality) and recommendations. High-level snapshot from a typical run: **393** unit tests passing; retrieval **82% hit rate**, **0.58 MRR**, **0.91 NDCG@5** on 79 eval questions; index validation passes except when the `codes` source is not ingested. RAG answer quality (keyword coverage, citations) is limited by the default small local LLM; retrieval is strong and improvements are best focused on prompt/model for generation and citing.
 
 ### 5. Embedding search UI (optional)
 
@@ -102,200 +104,6 @@ streamlit run app.py
 - Filters: source, manual, jurisdiction.
 - Options: top-k, distance threshold, full chunk content.
 - Styled result cards with similarity scores and metadata.
-
-## Evaluation Findings
-
-Full pipeline evaluation run on 2026-02-18 using default settings (embedding model: `all-MiniLM-L6-v2`, LLM: `TinyLlama-1.1B-Chat-v1.0`, chunk size: 1000, overlap: 200, k=5) with HCPCS/ICD-10 semantic enrichment enabled. Data sources: IOM manuals 100-02/03/04, MCD bulk data, and HCPCS codes (ICD-10-CM not included — requires `ICD10_CM_ZIP_URL`).
-
-### Index Summary
-
-| Metric | Value |
-|--------|-------|
-| Total documents (chunks) | 36,090 |
-| IOM chunks | 17,238 (47.8%) |
-| MCD chunks | 9,847 (27.3%) |
-| Codes chunks | 9,005 (24.9%) |
-| Embedding dimension | 384 |
-| Content length (median) | 467 chars |
-| Content length (p5–p95) | 83–989 chars |
-| Validation checks | 23/23 passed |
-| Duplicate IDs | 0 |
-| Empty documents | 0 |
-
-### Semantic Enrichment Impact
-
-The biggest change from the previous baseline is the addition of semantic enrichment for HCPCS/ICD-10 code documents. Each code document is now prepended with category labels and related terms before embedding. For example, HCPCS code E0100 ("Cane, adjustable or fixed") now includes:
-
-> *HCPCS E-codes: Durable Medical Equipment. Related terms: durable medical equipment, DME, wheelchair, hospital bed, oxygen equipment, CPAP, BiPAP, walker, cane, crutch...*
-
-This provides the semantic bridge that allows natural-language queries like "What HCPCS codes are used for durable medical equipment?" to match code documents that would otherwise only contain terse clinical descriptions.
-
-#### Code Lookup — Before and After Enrichment
-
-| Metric | Before (baseline) | After (enriched) | Delta |
-|--------|--------------------|-------------------|-------|
-| Hit rate | 14% (1/7) | **57% (4/7)** | **+43pp** |
-| MRR | 0.143 | **0.500** | **+0.357** |
-| Precision@5 | 0.086 | **0.486** | **+0.400** |
-
-| Query | Before | After |
-|-------|--------|-------|
-| "HCPCS Level II codes for supplies and procedures" | FAIL | **PASS (rank 1, P@5=1.0)** |
-| "What HCPCS codes are used for durable medical equipment?" | FAIL | **PASS (rank 1, P@5=1.0)** |
-| "HCPCS J codes for injectable drugs" | FAIL | **PASS (rank 1, P@5=1.0)** |
-| "ICD-10-CM codes for COPD" | PASS (rank 1) | PASS (rank 2) |
-| ICD-10 hypertension / chest pain / diabetes | FAIL | FAIL (no data) |
-
-#### Cross-Source — Before and After Enrichment
-
-| Metric | Before | After | Delta |
-|--------|--------|-------|-------|
-| MRR | 0.675 | **1.000** | **+0.325** |
-| P@5 | 0.700 | **0.950** | **+0.250** |
-
-"Durable medical equipment coverage policy and HCPCS codes" improved from rank 5 (P@5=0.20) to **rank 1 (P@5=0.80)**. "Medicare billing rules and codes for laboratory tests" improved from rank 2 (P@5=0.60) to **rank 1 (P@5=1.00)**.
-
-#### Codes Expected Source — Before and After
-
-| Metric | Before | After | Delta |
-|--------|--------|-------|-------|
-| Hit rate | 67% | **72%** | +5pp |
-| MRR | 0.567 | **0.667** | +0.100 |
-
-#### Consistency — Improved
-
-| Group | Before | After | Delta |
-|-------|--------|-------|-------|
-| cardiac_rehab | 0.167 | **0.667** | +0.500 |
-| wheelchair | 0.800 | 0.800 | 0.000 |
-| **Average** | 0.483 | **0.733** | **+0.250** |
-
-### Retrieval Evaluation — Baseline (63 questions, k=5)
-
-Run on 2026-02-18 with semantic enrichment; semantic-only retriever.
-
-| Metric | Value |
-|--------|-------|
-| **Hit Rate** | **76.2%** (48/63) |
-| **MRR** | **0.6646** |
-| **Avg Precision@5** | **0.5619** |
-| **Avg NDCG@5** | **0.9413** |
-| Median latency | 4 ms |
-| p95 latency | 5 ms |
-
-#### Performance by category (baseline)
-
-| Category | n | Hit Rate | MRR | P@k | NDCG@k |
-|----------|---|----------|-----|-----|--------|
-| claims_billing | 6 | 100% | 1.000 | 0.933 | 0.979 |
-| coding_modifiers | 5 | 100% | 1.000 | 0.800 | 0.993 |
-| compliance | 3 | 100% | 0.611 | 0.467 | 0.925 |
-| consistency | 4 | 100% | 1.000 | 0.650 | 0.982 |
-| cross_source | 4 | 100% | 1.000 | 1.000 | 1.000 |
-| payment | 3 | 100% | 1.000 | 0.867 | 0.982 |
-| policy_coverage | 6 | 83% | 0.583 | 0.567 | 0.965 |
-| edge_case | 4 | 75% | 0.500 | 0.450 | 0.971 |
-| appeals_denials | 5 | 60% | 0.467 | 0.400 | 0.974 |
-| abbreviation | 5 | 60% | 0.340 | 0.280 | 0.950 |
-| semantic_retrieval | 5 | 60% | 0.500 | 0.320 | 0.968 |
-| **code_lookup** | **7** | **57%** | **0.571** | **0.486** | **0.695** |
-| lcd_policy | 6 | 33% | 0.333 | 0.267 | 0.969 |
-
-### Retrieval Evaluation — Hybrid retriever (63 questions, k=8)
-
-Run on 2026-02-19 with **hybrid retrieval**: semantic + BM25 (RRF), cross-source query expansion, and source diversification. Index: 35,487 chunks (IOM 17,238, MCD 9,244, codes 9,005).
-
-| Metric | Value |
-|--------|-------|
-| **Hit Rate** | **87.3%** (55/63) |
-| **MRR** | **0.694** |
-| **Avg Precision@k** | 0.540 |
-| **Avg Recall@k** | 0.714 |
-| **NDCG@k** | 0.944 |
-| Median latency | 442 ms |
-| p95 latency | 798 ms |
-
-#### Performance by category (hybrid)
-
-| Category | n | Hit Rate | MRR | P@k | R@k | NDCG@k |
-|----------|---|----------|-----|-----|-----|--------|
-| claims_billing | 6 | 100% | 1.000 | 0.94 | 1.0 | 0.98 |
-| coding_modifiers | 5 | 100% | 1.000 | 0.90 | 0.50 | 1.0 |
-| compliance | 3 | 100% | 0.567 | 0.29 | 1.0 | 0.88 |
-| consistency | 4 | 100% | 0.875 | 0.69 | 0.50 | 0.98 |
-| cross_source | 4 | 100% | 1.000 | 0.84 | 0.46 | 0.99 |
-| payment | 3 | 100% | 1.000 | 0.88 | 1.0 | 0.99 |
-| policy_coverage | 6 | 100% | 0.681 | 0.60 | 1.0 | 0.96 |
-| abbreviation | 5 | 100% | 0.467 | 0.28 | 0.80 | 0.94 |
-| appeals_denials | 5 | 80% | 0.490 | 0.45 | 0.80 | 0.96 |
-| semantic_retrieval | 5 | 80% | 0.567 | 0.30 | 0.80 | 0.97 |
-| code_lookup | 7 | 71% | 0.548 | 0.41 | 0.71 | 0.77 |
-| edge_case | 4 | 75% | 0.625 | 0.25 | 0.42 | 0.96 |
-| lcd_policy | 6 | 50% | 0.417 | 0.27 | 0.33 | 0.98 |
-
-#### Performance by expected source (hybrid)
-
-| Source | n | Hit Rate | MRR | P@k | NDCG@k |
-|--------|---|----------|-----|-----|--------|
-| iom | 52 | 94.2% | 0.758 | 0.596 | 0.966 |
-| codes | 18 | 88.9% | 0.787 | 0.590 | 0.900 |
-| mcd | 16 | 75.0% | 0.656 | 0.461 | 0.975 |
-
-#### Performance by difficulty (hybrid)
-
-| Difficulty | n | Hit Rate | MRR | P@k | NDCG@k |
-|------------|---|----------|-----|-----|--------|
-| medium | 38 | 94.7% | 0.745 | 0.625 | 0.963 |
-| easy | 9 | 88.9% | 0.602 | 0.417 | 0.800 |
-| hard | 16 | 68.8% | 0.625 | 0.406 | 0.981 |
-
-#### Hybrid vs baseline (summary)
-
-| Metric | Baseline (k=5) | Hybrid (k=8) | Delta |
-|--------|----------------|--------------|-------|
-| Hit rate | 76.2% | **87.3%** | **+11.1 pp** |
-| MRR | 0.665 | **0.694** | +0.029 |
-| NDCG@k | 0.941 | 0.944 | +0.003 |
-
-Hybrid retrieval (semantic + BM25, cross-source expansion, source diversification) improves overall hit rate and MRR; IOM and codes expected-source metrics also improve. LCD policy remains the weakest category (50% hit rate). Latency is higher due to BM25 index and multiple queries per request.
-
-### Key Findings
-
-**Strengths:**
-
-1. **Semantic enrichment dramatically improves code retrieval.** HCPCS code lookup went from 14% to 57% hit rate. Three previously-failing HCPCS queries now succeed at rank 1 with perfect precision. The enrichment text provides category context that embeddings can leverage.
-
-2. **Cross-source queries now achieve perfect MRR.** Queries spanning IOM policy and HCPCS codes (e.g., "Durable medical equipment coverage policy and HCPCS codes") now consistently rank relevant content at the top, up from MRR 0.675 to 1.000.
-
-3. **Strong IOM and claims retrieval.** Claims/billing achieves 100% hit rate. IOM-sourced policy, payment, and compliance content retrieves reliably.
-
-4. **Improved consistency.** Rephrased query pairs now retrieve more overlapping result sets (Jaccard 0.733 vs 0.483), particularly for cardiac rehabilitation topics.
-
-5. **Fast retrieval.** Baseline semantic retriever: median latency 4 ms per query with p95 at 5 ms, even on CPU.
-
-**Weaknesses and areas for improvement:**
-
-1. **LCD-specific queries remain weak (33% hit rate).** The main `lcd.csv` file with full LCD policy text is now ingested (CSV field size limit increased via `CSV_FIELD_SIZE_LIMIT` and long-text column handling). Full LCD policy documents are indexed; the lcd_policy eval category still shows 33% hit rate—query/chunk tuning may improve this further.
-
-2. **ICD-10-CM queries fail (no data).** Hypertension, chest pain, and diabetes foot ulcer ICD-10 queries cannot succeed without downloading ICD-10-CM data (requires `ICD10_CM_ZIP_URL`). The enrichment module is ready to tag these codes when data is available.
-
-3. **TinyLlama answer quality is limited.** The 1.1B-parameter model produces verbose, repetitive answers. A larger model (7B+) would substantially improve answer quality.
-
-### Recommendations
-
-1. ~~**Improve code document embeddings.**~~ **Done.** Semantic enrichment now prepends category labels and related terms to HCPCS/ICD-10 documents. Code lookup hit rate improved from 14% to 57%.
-
-2. ~~**Parse full LCD text.**~~ **Done.** We finished this: the ingest pipeline raises the CSV field size limit (configurable `CSV_FIELD_SIZE_LIMIT`, default 10 MB) and treats long-text columns (e.g. Body, policy, coverage criteria) so that `lcd.csv` and other MCD CSVs with large HTML policy text are fully parsed and indexed.
-
-3. **Improve LCD retrieval.** Now that full LCD policy text is indexed, tune chunk size/overlap or retrieval (e.g. query expansion, LCD-specific k) to raise the lcd_policy eval hit rate above 33%.
-
-4. **Add ICD-10-CM data.** Set `ICD10_CM_ZIP_URL` in `.env` to download and index ICD-10-CM codes. The enrichment module already supports ICD-10-CM chapter tagging.
-
-5. **Upgrade the LLM.** Replace TinyLlama with a larger model (e.g., Mistral-7B, Llama-3-8B) for better answer synthesis, reduced repetition, and proper citation formatting.
-
-6. ~~**Improve cross-source retrieval.**~~ **Done.** The dev branch adds a hybrid retriever (semantic + BM25 with RRF, cross-source query expansion, and source diversification). Hit rate improved from 76.2% to 87.3% (k=8); install with `pip install -e ".[dev]"` for the `rank-bm25` dependency.
-
-7. **Boost consistency.** For topics with fragmented content (like cardiac rehab), consider adding document-level summaries or topic clusters to improve retrieval stability across rephrasings.
 
 ## Configuration
 
@@ -363,3 +171,12 @@ No network or real downloads needed for the core suite; mocks are used for HTTP 
 - **`data/`** — Runtime data (gitignored): `raw/`, `processed/`, `chroma/`.
 
 See **AGENTS.md** for detailed layout, conventions, and patterns.
+
+## Documentation
+
+- **[EVAL_RESULTS.md](EVAL_RESULTS.md)** — Full evaluation suite: unit tests, index validation, retrieval metrics (hit rate, MRR, NDCG), RAG answer quality summary, and analysis with recommendations.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — How to run tests, ruff, and contribute.
+- **[docs/troubleshooting.md](docs/troubleshooting.md)** — Common issues and fixes.
+- **[docs/eval_questions.md](docs/eval_questions.md)** — Eval question schema and how to run evaluation.
+- **[docs/topic_definitions.md](docs/topic_definitions.md)** — Topic definitions for clustering and summary boosting.
+- **[docs/data_sources.md](docs/data_sources.md)** — External data URLs and formats.

@@ -143,9 +143,13 @@ class TestRunHybridSearch:
         fake_docs = [MagicMock(), MagicMock()]
         mock_retriever = MagicMock()
         mock_retriever.invoke.return_value = fake_docs
+        mock_store = MagicMock()
+        mock_embeddings = MagicMock()
 
         with patch.object(app, "get_retriever", return_value=mock_retriever):
-            result = app._run_hybrid_search("Medicare timely filing", k=5, metadata_filter=None)
+            result = app._run_hybrid_search(
+                mock_store, mock_embeddings, "Medicare timely filing", k=5, metadata_filter=None
+            )
 
         mock_retriever.invoke.assert_called_once_with("Medicare timely filing")
         assert result == fake_docs
@@ -153,19 +157,27 @@ class TestRunHybridSearch:
     def test_passes_k_and_filter_to_retriever_factory(self) -> None:
         mock_retriever = MagicMock()
         mock_retriever.invoke.return_value = []
+        mock_store = MagicMock()
+        mock_embeddings = MagicMock()
         flt = {"source": "iom"}
 
         with patch.object(app, "get_retriever", return_value=mock_retriever) as mock_get:
-            app._run_hybrid_search("query", k=3, metadata_filter=flt)
+            app._run_hybrid_search(mock_store, mock_embeddings, "query", k=3, metadata_filter=flt)
 
-        mock_get.assert_called_once_with(k=3, metadata_filter=flt)
+        mock_get.assert_called_once_with(
+            store=mock_store, embeddings=mock_embeddings, k=3, metadata_filter=flt
+        )
 
     def test_returns_empty_list_when_no_results(self) -> None:
         mock_retriever = MagicMock()
         mock_retriever.invoke.return_value = []
+        mock_store = MagicMock()
+        mock_embeddings = MagicMock()
 
         with patch.object(app, "get_retriever", return_value=mock_retriever):
-            result = app._run_hybrid_search("no match query", k=10, metadata_filter=None)
+            result = app._run_hybrid_search(
+                mock_store, mock_embeddings, "no match query", k=10, metadata_filter=None
+            )
 
         assert result == []
 
