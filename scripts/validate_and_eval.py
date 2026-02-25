@@ -47,7 +47,6 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_EVAL_PATH = _SCRIPT_DIR / "eval_questions.json"
 
 REQUIRED_METADATA_KEYS = ("doc_id", "content_hash")
-EXPECTED_SOURCES = ("iom", "mcd", "codes")
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +93,12 @@ def validate_index(store, domain_name: str | None = None) -> dict:
 
     name = domain_name or DEFAULT_DOMAIN
     try:
-        COLLECTION_NAME = get_domain(name).collection_name
+        domain = get_domain(name)
+        COLLECTION_NAME = domain.collection_name
+        EXPECTED_SOURCES = tuple(domain.source_kinds)
     except (KeyError, ImportError):
         COLLECTION_NAME = "medicare"
+        EXPECTED_SOURCES = ("iom", "mcd", "codes")
 
     results: dict = {
         "passed": True,

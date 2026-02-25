@@ -78,6 +78,7 @@ def expand_lcd_query(query: str, domain_name: str | None = None) -> list[str]:
       3. A stripped concept query (domain jargon removed) so the embedding
          focuses on the core topic.
     """
+    resolved_domain = _resolve_domain_name(domain_name)
     domain_patterns = _get_domain_query_patterns(domain_name)
     topic_patterns = domain_patterns.get("specialized_topic_patterns", [])
     strip_noise = domain_patterns.get("strip_noise_pattern")
@@ -89,7 +90,7 @@ def expand_lcd_query(query: str, domain_name: str | None = None) -> list[str]:
 
     if topic_expansions:
         queries.append(f"{query} {' '.join(topic_expansions)}")
-    else:
+    elif resolved_domain == "medicare":
         queries.append(
             f"{query} Local Coverage Determination LCD policy coverage criteria"
         )
