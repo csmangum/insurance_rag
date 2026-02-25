@@ -1,37 +1,39 @@
 #!/usr/bin/env python3
-"""Interactive REPL for Medicare RAG. Run the query chain and print cited answers with source metadata.
+"""Interactive REPL for Insurance RAG queries.
 
 Usage:
   python scripts/query.py
-  python scripts/query.py --filter-source iom --filter-manual 100-02
+  python scripts/query.py --domain auto
+  python scripts/query.py --domain medicare --filter-source iom
 """
-
 import argparse
 import sys
 from pathlib import Path
 
-from medicare_rag.config import CHROMA_DIR, COLLECTION_NAME
-from medicare_rag.query.chain import build_rag_chain
+from insurance_rag.config import CHROMA_DIR
+from insurance_rag.domains import get_domain, list_domains
+from insurance_rag.query.chain import build_rag_chain
 
 try:
     import readline
 
-    _HISTORY_PATH = Path.home() / ".medicare_rag_query_history"
+    _HISTORY_PATH = Path.home() / ".insurance_rag_query_history"
     _READLINE_AVAILABLE = True
 except ImportError:
     _READLINE_AVAILABLE = False
     _HISTORY_PATH = None
 
 
-SOURCE_META_KEYS = ("source", "manual", "chapter", "doc_id", "jurisdiction", "title")
+SOURCE_META_KEYS = ("source", "manual", "chapter", "doc_id", "jurisdiction", "title", "state")
 
 
-def _check_index_has_docs() -> bool:
+def _check_index_has_docs(domain_name: str) -> bool:
     try:
-        from medicare_rag.index import get_embeddings, get_or_create_chroma
+        from insurance_rag.index import get_embeddings, get_or_create_chroma
 
+        domain = get_domain(domain_name)
         embeddings = get_embeddings()
-        store = get_or_create_chroma(embeddings)
+        store = get_or_create_chroma(embeddings, collection_name=domain.collection_name)
         n = store._collection.count()
         return n > 0
     except Exception:
@@ -39,41 +41,56 @@ def _check_index_has_docs() -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Medicare RAG query REPL")
+    available = list_domains()
+    parser = argparse.ArgumentParser(description="Insurance RAG query REPL")
     parser.add_argument(
-        "--filter-source", type=str, help="Filter by source (e.g. iom, mcd, codes)"
+        "--domain",
+        choices=available,
+        default="medicare",
+        help=f"Domain to query (default: medicare). Available: {', '.join(available)}",
     )
     parser.add_argument(
-        "--filter-manual", type=str, help="Filter by manual (e.g. 100-02)"
+        "--filter-source", type=str, help="Filter by source kind"
     )
     parser.add_argument(
-        "--filter-jurisdiction", type=str, help="Filter by jurisdiction (e.g. JL)"
+        "--filter-manual", type=str, help="Filter by manual (Medicare)"
+    )
+    parser.add_argument(
+        "--filter-jurisdiction", type=str, help="Filter by jurisdiction"
+    )
+    parser.add_argument(
+        "--filter-state", type=str, help="Filter by state code (e.g. CA, FL)"
     )
     parser.add_argument(
         "-k", type=int, default=8, help="Number of chunks to retrieve (default 8)"
     )
     args = parser.parse_args()
 
-    metadata_filter = None
-    if args.filter_source or args.filter_manual or args.filter_jurisdiction:
-        metadata_filter = {}
-        if args.filter_source:
-            metadata_filter["source"] = args.filter_source
-        if args.filter_manual:
-            metadata_filter["manual"] = args.filter_manual
-        if args.filter_jurisdiction:
-            metadata_filter["jurisdiction"] = args.filter_jurisdiction
+    domain = get_domain(args.domain)
+
+    metadata_filter: dict | None = None
+    filter_args = {
+        "source": args.filter_source,
+        "manual": args.filter_manual,
+        "jurisdiction": args.filter_jurisdiction,
+        "state": args.filter_state,
+    }
+    active_filters = {k: v for k, v in filter_args.items() if v}
+    if active_filters:
+        metadata_filter = active_filters
 
     if not CHROMA_DIR.exists():
         print(
-            f"Error: Chroma index not found at {CHROMA_DIR}. Run ingestion first (scripts/ingest_all.py).",
+            f"Error: Chroma index not found at {CHROMA_DIR}. "
+            "Run ingestion first (scripts/ingest_all.py).",
             file=sys.stderr,
         )
         return 1
 
-    if not _check_index_has_docs():
+    if not _check_index_has_docs(args.domain):
         print(
-            f"Error: Collection {COLLECTION_NAME} is empty. Run ingestion first (scripts/ingest_all.py).",
+            f"Error: Collection for {domain.display_name} is empty. "
+            f"Run ingestion first: python scripts/ingest_all.py --domain {args.domain}",
             file=sys.stderr,
         )
         return 1
@@ -88,11 +105,22 @@ def main() -> int:
         except (AttributeError, TypeError):
             pass
 
-    print("Medicare RAG query (blank line to quit)")
+    print(f"{domain.display_name} RAG query (blank line to quit)")
     print("---")
 
-    # Build the RAG chain once before the loop to avoid rebuilding on every question
-    chain = build_rag_chain(k=args.k, metadata_filter=metadata_filter)
+    from insurance_rag.index import get_embeddings, get_or_create_chroma
+
+    embeddings = get_embeddings()
+    store = get_or_create_chroma(embeddings, collection_name=domain.collection_name)
+
+    chain = build_rag_chain(
+        k=args.k,
+        metadata_filter=metadata_filter,
+        domain_name=args.domain,
+        store=store,
+        embeddings=embeddings,
+        system_prompt=domain.get_system_prompt(),
+    )
 
     try:
         _repl_loop(chain)

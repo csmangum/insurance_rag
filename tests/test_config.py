@@ -2,7 +2,7 @@
 import os
 from unittest.mock import patch
 
-from medicare_rag.config import (
+from insurance_rag.config import (
     LCD_CHUNK_OVERLAP,
     LCD_CHUNK_SIZE,
     LCD_RETRIEVAL_K,
@@ -96,5 +96,5 @@ class TestLCDConfigDefaults:
         assert LCD_RETRIEVAL_K == 12
 
     def test_lcd_chunk_size_larger_than_standard(self) -> None:
-        from medicare_rag.config import CHUNK_SIZE
+        from insurance_rag.config import CHUNK_SIZE
         assert LCD_CHUNK_SIZE > CHUNK_SIZE

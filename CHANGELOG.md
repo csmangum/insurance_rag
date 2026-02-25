@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- **LCD-aware retriever** (`src/medicare_rag/query/retriever.py`): Complete rewrite of the
+- **LCD-aware retriever** (`src/insurance_rag/query/retriever.py`): Complete rewrite of the
   retriever with an `LCDAwareRetriever` class that detects LCD/coverage-determination queries
   and applies multi-query retrieval to dramatically improve hit rates on MCD policy content.
 
@@ -39,7 +39,7 @@ All notable changes to this project are documented in this file.
   mocked store (6 cases), and MCD chunk sizing (3 cases in `test_ingest.py`), plus LCD
   config defaults (4 cases in `test_config.py`).
 
-- **HCPCS/ICD-10-CM semantic enrichment** (`src/medicare_rag/ingest/enrich.py`): New module
+- **HCPCS/ICD-10-CM semantic enrichment** (`src/insurance_rag/ingest/enrich.py`): New module
   that prepends category labels, synonyms, and related terms to code document text before
   embedding. This bridges the semantic gap between terse code descriptions (e.g.,
   "Cane, includes canes of all materials, adjustable or fixed, with tip") and natural-language

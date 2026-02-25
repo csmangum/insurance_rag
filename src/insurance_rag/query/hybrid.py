@@ -29,7 +29,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
-from medicare_rag.config import (
+from insurance_rag.config import (
     CROSS_SOURCE_MIN_PER_SOURCE,
     GET_META_BATCH_SIZE,
     HYBRID_KEYWORD_WEIGHT,
@@ -38,9 +38,10 @@ from medicare_rag.config import (
     MAX_QUERY_VARIANTS,
     RRF_K,
 )
-from medicare_rag.index.store import get_raw_collection
-from medicare_rag.query.expand import detect_source_relevance, expand_cross_source_query
-from medicare_rag.query.retriever import (
+from insurance_rag.index.store import get_raw_collection
+from insurance_rag.query.expand import detect_source_relevance, expand_cross_source_query
+from insurance_rag.query.retriever import (
+    _resolve_domain_name,
     apply_topic_summary_boost,
     expand_lcd_query,
     is_lcd_query,
@@ -282,7 +283,7 @@ def ensure_source_diversity(
 
 class HybridRetriever(BaseRetriever):
     """Retriever that fuses semantic and BM25 keyword search, with
-    cross-source diversification and LCD-aware query expansion.
+    cross-source diversification and domain-aware query expansion.
 
     For every query:
       1. Expand the query into source-targeted variants.
@@ -291,9 +292,8 @@ class HybridRetriever(BaseRetriever):
       4. Fuse all result lists via Reciprocal Rank Fusion (RRF).
       5. Ensure source diversity in the final top-k.
 
-    LCD-specific queries additionally trigger the original LCD query
-    expansion (contractor/coverage-determination terms) so that MCD
-    content gets extra retrieval weight.
+    Specialized queries (e.g. LCD in Medicare) additionally trigger
+    domain-specific query expansion and source-filtered search.
     """
 
     model_config = {"arbitrary_types_allowed": True}
@@ -302,6 +302,7 @@ class HybridRetriever(BaseRetriever):
     k: int = 8
     lcd_k: int = LCD_RETRIEVAL_K
     metadata_filter: dict | None = None
+    domain_name: str | None = None
     semantic_weight: float = HYBRID_SEMANTIC_WEIGHT
     keyword_weight: float = HYBRID_KEYWORD_WEIGHT
 
@@ -314,13 +315,13 @@ class HybridRetriever(BaseRetriever):
         collection = get_raw_collection(self.store)
         _bm25_index.ensure_built(collection)
 
-        effective_k = self.lcd_k if is_lcd_query(query) else self.k
+        effective_k = self.lcd_k if is_lcd_query(query, self.domain_name) else self.k
         fetch_k = max(effective_k * 2, 20)
 
-        variants = expand_cross_source_query(query)
+        variants = expand_cross_source_query(query, domain_name=self.domain_name)
 
-        if is_lcd_query(query):
-            lcd_variants = expand_lcd_query(query)
+        if is_lcd_query(query, self.domain_name):
+            lcd_variants = expand_lcd_query(query, self.domain_name)
             for lv in lcd_variants[1:]:
                 if lv not in variants:
                     variants.append(lv)
@@ -339,20 +340,32 @@ class HybridRetriever(BaseRetriever):
                 _bm25_index.search(variant, k=fetch_k, metadata_filter=self.metadata_filter)
             )
 
-        if is_lcd_query(query):
-            mcd_filter = {"source": "mcd"}
-            if self.metadata_filter is not None:
-                mcd_filter = {**self.metadata_filter, "source": "mcd"}
+        spec_filter = None
+        resolved = _resolve_domain_name(self.domain_name)
+        try:
+            from insurance_rag.domains import get_domain
 
-            if self.metadata_filter is None or self.metadata_filter.get("source") in (
-                None,
-                "mcd",
-            ):
+            spec_filter = get_domain(resolved).get_specialized_source_filter()
+        except KeyError:
+            logger.warning("Unknown domain %r, skipping specialized source filter", resolved)
+
+        if spec_filter and is_lcd_query(query, self.domain_name):
+            source_filter = {**spec_filter}
+            if self.metadata_filter is not None:
+                source_filter = {**self.metadata_filter, **source_filter}
+
+            if self.metadata_filter is None or self.metadata_filter.get(
+                "source"
+            ) in (None, spec_filter.get("source")):
                 semantic_lists.append(
-                    self.store.similarity_search(query, k=fetch_k, filter=mcd_filter)
+                    self.store.similarity_search(
+                        query, k=fetch_k, filter=source_filter
+                    )
                 )
                 keyword_lists.append(
-                    _bm25_index.search(query, k=fetch_k, metadata_filter=mcd_filter)
+                    _bm25_index.search(
+                        query, k=fetch_k, metadata_filter=source_filter
+                    )
                 )
 
         all_lists = semantic_lists + keyword_lists
@@ -361,9 +374,11 @@ class HybridRetriever(BaseRetriever):
 
         fused = reciprocal_rank_fusion(all_lists, weights=weights, max_results=fetch_k)
 
-        fused = apply_topic_summary_boost(self.store, fused, query, fetch_k)
+        fused = apply_topic_summary_boost(
+            self.store, fused, query, fetch_k, domain_name=self.domain_name
+        )
 
-        relevance = detect_source_relevance(query)
+        relevance = detect_source_relevance(query, domain_name=self.domain_name)
         diversified = ensure_source_diversity(fused, relevance, effective_k)
 
         return diversified
@@ -374,11 +389,13 @@ def get_hybrid_retriever(
     metadata_filter: dict | None = None,
     embeddings: Any = None,
     store: Any = None,
+    domain_name: str | None = None,
 ) -> HybridRetriever:
     """Convenience constructor that wires up embeddings and Chroma store.
 
     Raises ImportError if rank-bm25 is not installed, so callers (e.g.
     get_retriever) can catch it and fall back to a non-hybrid retriever.
+    Invalid domain names fall back to DEFAULT_DOMAIN.
 
     If embeddings and store are provided, they will be reused instead of
     creating new instances, avoiding redundant model loading.
@@ -386,17 +403,22 @@ def get_hybrid_retriever(
     if not _HAS_BM25:
         raise ImportError("rank-bm25 is required for hybrid retrieval")
 
+    resolved = _resolve_domain_name(domain_name)
     if embeddings is None or store is None:
-        from medicare_rag.index import get_embeddings, get_or_create_chroma
+        from insurance_rag.index import get_embeddings, get_or_create_chroma
 
         if embeddings is None:
             embeddings = get_embeddings()
         if store is None:
-            store = get_or_create_chroma(embeddings)
+            from insurance_rag.domains import get_domain
+
+            coll = get_domain(resolved).collection_name
+            store = get_or_create_chroma(embeddings, collection_name=coll)
 
     return HybridRetriever(
         store=store,
         k=k,
         lcd_k=max(k, LCD_RETRIEVAL_K),
         metadata_filter=metadata_filter,
+        domain_name=resolved,
     )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprehensive search validation and retrieval evaluation for the Medicare RAG index.
+"""Comprehensive search validation and retrieval evaluation for the Insurance RAG index.
 
 Validates the Chroma index thoroughly (structure, metadata, distributions, embeddings)
 and runs a rich retrieval evaluation with multiple metrics across categories, difficulty
@@ -24,6 +24,8 @@ Usage:
   python scripts/validate_and_eval.py --eval-only --k-values 1,3,5,10  # multi-k sweep
   python scripts/validate_and_eval.py --eval-only --baseline scripts/eval_baseline.json   # regression gate
   python scripts/validate_and_eval.py --eval-only --save-baseline scripts/eval_baseline.json   # update baseline
+  python scripts/validate_and_eval.py --domain medicare   # validate/eval medicare collection (default)
+  python scripts/validate_and_eval.py --domain auto --eval-only   # eval auto domain only
 """
 import argparse
 import json
@@ -45,32 +47,58 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_EVAL_PATH = _SCRIPT_DIR / "eval_questions.json"
 
 REQUIRED_METADATA_KEYS = ("doc_id", "content_hash")
-EXPECTED_SOURCES = ("iom", "mcd", "codes")
 
 
 # ---------------------------------------------------------------------------
 # Index loading helpers
 # ---------------------------------------------------------------------------
 
-def _load_store():
-    from medicare_rag.index import get_embeddings, get_or_create_chroma
+def _load_store(domain_name: str | None = None):
+    from insurance_rag.config import DEFAULT_DOMAIN
+    from insurance_rag.domains import get_domain
+    from insurance_rag.index import get_embeddings, get_or_create_chroma
+    name = domain_name or DEFAULT_DOMAIN
     embeddings = get_embeddings()
-    store = get_or_create_chroma(embeddings)
+    collection_name = get_domain(name).collection_name
+    store = get_or_create_chroma(embeddings, collection_name=collection_name)
     return store, embeddings
 
 
-def _load_retriever(k: int, metadata_filter: dict | None = None):
-    from medicare_rag.query.retriever import get_retriever
-    return get_retriever(k=k, metadata_filter=metadata_filter)
+def _load_retriever(
+    k: int,
+    metadata_filter: dict | None = None,
+    domain_name: str | None = None,
+    store=None,
+    embeddings=None,
+):
+    from insurance_rag.query.retriever import get_retriever
+
+    return get_retriever(
+        k=k,
+        metadata_filter=metadata_filter,
+        domain_name=domain_name,
+        store=store,
+        embeddings=embeddings,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
 
-def validate_index(store) -> dict:
+def validate_index(store, domain_name: str | None = None) -> dict:
     """Run comprehensive index validation. Returns a dict of results with 'passed' bool."""
-    from medicare_rag.config import CHROMA_DIR, COLLECTION_NAME, _REPO_ROOT
+    from insurance_rag.config import _REPO_ROOT, CHROMA_DIR, DEFAULT_DOMAIN
+    from insurance_rag.domains import get_domain
+
+    name = domain_name or DEFAULT_DOMAIN
+    try:
+        domain = get_domain(name)
+        COLLECTION_NAME = domain.collection_name
+        EXPECTED_SOURCES = tuple(domain.source_kinds)
+    except (KeyError, ImportError):
+        COLLECTION_NAME = "medicare"
+        EXPECTED_SOURCES = ("iom", "mcd", "codes")
 
     results: dict = {
         "passed": True,
@@ -539,6 +567,7 @@ def run_eval(
     k: int = 5,
     metadata_filter: dict | None = None,
     k_values: list[int] | None = None,
+    domain_name: str | None = None,
 ) -> dict:
     """Run the full evaluation suite. Returns comprehensive metrics dict."""
     if not eval_path.exists():
@@ -566,7 +595,14 @@ def run_eval(
     if k_values is None:
         k_values = [k]
 
-    retriever = _load_retriever(k=max(max(k_values), k), metadata_filter=metadata_filter)
+    store, embeddings = _load_store(domain_name)
+    retriever = _load_retriever(
+        k=max(max(k_values), k),
+        metadata_filter=metadata_filter,
+        domain_name=domain_name,
+        store=store,
+        embeddings=embeddings,
+    )
 
     # Warmup: run one retrieval to amortise cold-start costs (model loading,
     # Chroma cache priming) so that latency stats reflect steady-state performance.
@@ -1090,7 +1126,14 @@ def _format_validation_report(validation: dict) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Comprehensive Medicare RAG index validation and retrieval evaluation."
+        description="Comprehensive Insurance RAG index validation and retrieval evaluation."
+    )
+    parser.add_argument(
+        "--domain",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Domain to validate/evaluate (e.g. medicare, auto). Default: config DEFAULT_DOMAIN.",
     )
     parser.add_argument(
         "--validate-only",
@@ -1164,6 +1207,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Resolve and set active domain so retriever/expand/chain use it
+    import insurance_rag.config as _config
+    from insurance_rag.domains import get_domain, list_domains
+
+    domain = args.domain if args.domain is not None else _config.DEFAULT_DOMAIN
+    if domain not in list_domains():
+        logger.error("Unknown domain %r. Available: %s", domain, ", ".join(list_domains()))
+        return 1
+    _config.DEFAULT_DOMAIN = domain
+    logger.info("Using domain: %s (collection: %s)", domain, get_domain(domain).collection_name)
+
     if args.json:
         logging.getLogger().setLevel(logging.WARNING)
 
@@ -1183,14 +1237,14 @@ def main() -> int:
     # ---- Validation ----
     if do_validate:
         try:
-            store, _ = _load_store()
+            store, _ = _load_store(domain)
         except Exception as e:
             logger.exception("Failed to load store: %s", e)
             return 1
         logger.info("=" * 60)
-        logger.info("=== INDEX VALIDATION ===")
+        logger.info("=== INDEX VALIDATION (%s) ===", domain)
         logger.info("=" * 60)
-        validation = validate_index(store)
+        validation = validate_index(store, domain)
         all_output["validation"] = validation
 
         if not args.json:
@@ -1255,6 +1309,7 @@ def main() -> int:
                 k=args.k,
                 metadata_filter=metadata_filter,
                 k_values=k_values,
+                domain_name=domain,
             )
             all_output["evaluation"] = metrics
 

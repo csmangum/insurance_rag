@@ -68,12 +68,13 @@ class TestGetCollectionMeta:
         class MockStore:
             _collection = MockCollection()
 
-        result = app._get_collection_meta(MockStore())
+        result = app._get_collection_meta("medicare", MockStore())
         assert result == {
             "count": 0,
             "sources": [],
             "manuals": [],
             "jurisdictions": [],
+            "states": [],
         }
 
     def test_single_batch_aggregates_metadata(self) -> None:
@@ -96,7 +97,7 @@ class TestGetCollectionMeta:
         class MockStore:
             _collection = MockCollection()
 
-        result = app._get_collection_meta(MockStore())
+        result = app._get_collection_meta("medicare", MockStore())
         assert result["count"] == 2
         assert result["sources"] == ["iom", "mcd"]
         assert result["manuals"] == ["100-02", "L12345"]
@@ -131,7 +132,7 @@ class TestGetCollectionMeta:
         class MockStore:
             _collection = MockCollection()
 
-        result = app._get_collection_meta(MockStore())
+        result = app._get_collection_meta("medicare", MockStore())
         assert result["count"] == 600
         assert sorted(result["sources"]) == ["codes", "iom", "mcd"]
         assert sorted(result["manuals"]) == ["100-02", "100-03"]
@@ -148,7 +149,12 @@ class TestRunHybridSearch:
 
         with patch.object(app, "get_retriever", return_value=mock_retriever):
             result = app._run_hybrid_search(
-                mock_store, mock_embeddings, "Medicare timely filing", k=5, metadata_filter=None
+                mock_store,
+                mock_embeddings,
+                "Medicare timely filing",
+                k=5,
+                metadata_filter=None,
+                domain_name="medicare",
             )
 
         mock_retriever.invoke.assert_called_once_with("Medicare timely filing")
@@ -162,10 +168,21 @@ class TestRunHybridSearch:
         flt = {"source": "iom"}
 
         with patch.object(app, "get_retriever", return_value=mock_retriever) as mock_get:
-            app._run_hybrid_search(mock_store, mock_embeddings, "query", k=3, metadata_filter=flt)
+            app._run_hybrid_search(
+                mock_store,
+                mock_embeddings,
+                "query",
+                k=3,
+                metadata_filter=flt,
+                domain_name="medicare",
+            )
 
         mock_get.assert_called_once_with(
-            store=mock_store, embeddings=mock_embeddings, k=3, metadata_filter=flt
+            store=mock_store,
+            embeddings=mock_embeddings,
+            k=3,
+            metadata_filter=flt,
+            domain_name="medicare",
         )
 
     def test_returns_empty_list_when_no_results(self) -> None:
@@ -176,7 +193,12 @@ class TestRunHybridSearch:
 
         with patch.object(app, "get_retriever", return_value=mock_retriever):
             result = app._run_hybrid_search(
-                mock_store, mock_embeddings, "no match query", k=10, metadata_filter=None
+                mock_store,
+                mock_embeddings,
+                "no match query",
+                k=10,
+                metadata_filter=None,
+                domain_name="medicare",
             )
 
         assert result == []

@@ -1,9 +1,9 @@
 """Tests for summary document boosting in retrieval (retriever.py)."""
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from langchain_core.documents import Document
 
-from medicare_rag.query.retriever import (
+from insurance_rag.query.retriever import (
     LCDAwareRetriever,
     boost_summaries,
     detect_query_topics,

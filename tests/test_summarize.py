@@ -5,7 +5,7 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 
-from medicare_rag.ingest.summarize import (
+from insurance_rag.ingest.summarize import (
     _score_sentences,
     _split_sentences,
     generate_all_summaries,
@@ -213,7 +213,7 @@ class TestGenerateAllSummaries:
 class TestChunkDocumentsWithSummaries:
 
     def test_chunk_documents_with_summaries_enabled(self, tmp_path: Path):
-        from medicare_rag.ingest.chunk import chunk_documents
+        from insurance_rag.ingest.chunk import chunk_documents
 
         (tmp_path / "iom" / "100-02").mkdir(parents=True)
         long_text = ". ".join(
@@ -242,7 +242,7 @@ class TestChunkDocumentsWithSummaries:
         assert len(regular_docs) >= 2
 
     def test_chunk_documents_with_summaries_disabled(self, tmp_path: Path):
-        from medicare_rag.ingest.chunk import chunk_documents
+        from insurance_rag.ingest.chunk import chunk_documents
 
         (tmp_path / "iom" / "100-02").mkdir(parents=True)
         long_text = ". ".join(

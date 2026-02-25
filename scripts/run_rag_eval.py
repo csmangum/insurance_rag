@@ -9,6 +9,8 @@ Usage:
   python scripts/run_rag_eval.py
   python scripts/run_rag_eval.py --eval-file scripts/eval_questions.json --out data/rag_eval_report.md
   python scripts/run_rag_eval.py -k 8
+  python scripts/run_rag_eval.py --domain medicare
+  python scripts/run_rag_eval.py --domain auto --eval-file scripts/eval_auto.json
 """
 import argparse
 import json
@@ -110,7 +112,26 @@ def main() -> int:
         default=8,
         help="Number of chunks to retrieve per question (default: 8).",
     )
+    parser.add_argument(
+        "--domain",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Domain to run RAG eval for (e.g. medicare, auto). Default: config DEFAULT_DOMAIN.",
+    )
     args = parser.parse_args()
+
+    # Resolve and set active domain so retriever/chain use it
+    from insurance_rag.config import DEFAULT_DOMAIN
+    import insurance_rag.config as _config
+    from insurance_rag.domains import get_domain, list_domains
+
+    domain = args.domain if args.domain is not None else DEFAULT_DOMAIN
+    if domain not in list_domains():
+        logger.error("Unknown domain %r. Available: %s", domain, ", ".join(list_domains()))
+        return 1
+    _config.DEFAULT_DOMAIN = domain
+    logger.info("Using domain: %s (collection: %s)", domain, get_domain(domain).collection_name)
 
     if not args.eval_file.exists():
         logger.error("Eval file not found: %s", args.eval_file)
@@ -122,11 +143,13 @@ def main() -> int:
         logger.warning("Eval file is empty")
         return 0
 
-    from medicare_rag.config import CHROMA_DIR, COLLECTION_NAME, DATA_DIR
-    from medicare_rag.index import get_embeddings, get_or_create_chroma
-    from medicare_rag.query.retriever import get_retriever
+    from insurance_rag.config import CHROMA_DIR, DATA_DIR
+    from insurance_rag.domains import get_domain
+    from insurance_rag.index import get_embeddings, get_or_create_chroma
+    from insurance_rag.query.retriever import get_retriever
 
     out_path = args.out if args.out is not None else DATA_DIR / "rag_eval_report.md"
+    collection_name = get_domain(domain).collection_name
 
     if not CHROMA_DIR.exists():
         logger.error("Chroma index not found at %s. Run ingestion first.", CHROMA_DIR)
@@ -134,11 +157,13 @@ def main() -> int:
 
     try:
         embeddings = get_embeddings()
-        store = get_or_create_chroma(embeddings)
+        store = get_or_create_chroma(embeddings, collection_name=collection_name)
         if store._collection.count() == 0:
-            logger.error("Collection %s is empty. Run ingestion first.", COLLECTION_NAME)
+            logger.error("Collection %s is empty. Run ingestion first.", collection_name)
             return 1
-        retriever = get_retriever(k=args.k)
+        retriever = get_retriever(
+            k=args.k, store=store, embeddings=embeddings, domain_name=domain
+        )
     except Exception as e:
         logger.error("Failed to load index/retriever: %s", e)
         return 1
@@ -146,6 +171,7 @@ def main() -> int:
     lines = [
         "# RAG Eval Report (manual assessment)",
         "",
+        f"Domain: {domain}",
         f"Eval file: `{args.eval_file}`",
         f"Retriever k: {args.k}",
         "",
@@ -154,9 +180,11 @@ def main() -> int:
     ]
 
     # Build RAG chain once before loop to avoid reloading LLM for every question
-    from medicare_rag.query.chain import build_rag_chain
+    from insurance_rag.query.chain import build_rag_chain
     try:
-        rag_chain = build_rag_chain(retriever=retriever, k=args.k)
+        rag_chain = build_rag_chain(
+            retriever=retriever, k=args.k, domain_name=domain
+        )
     except Exception as e:
         logger.error("Failed to build RAG chain: %s", e)
         rag_chain = None
