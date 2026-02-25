@@ -2,7 +2,7 @@
 
 import pytest
 
-from medicare_rag.query.hybrid import reset_bm25_index
+from insurance_rag.query.hybrid import reset_bm25_index
 
 
 @pytest.fixture(autouse=True)

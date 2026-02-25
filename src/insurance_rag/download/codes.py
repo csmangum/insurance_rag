@@ -7,9 +7,9 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-from medicare_rag.config import ICD10_CM_ZIP_URL
-from medicare_rag.download._manifest import file_sha256, write_manifest
-from medicare_rag.download._utils import (
+from insurance_rag.config import ICD10_CM_ZIP_URL
+from insurance_rag.download._manifest import file_sha256, write_manifest
+from insurance_rag.download._utils import (
     DOWNLOAD_TIMEOUT,
     sanitize_filename_from_url,
     stream_download,

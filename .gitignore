@@ -210,4 +210,4 @@ __marimo__/
 data/
 
 # Keep package data under src/
-!src/medicare_rag/data/
+!src/insurance_rag/data/

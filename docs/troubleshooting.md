@@ -41,7 +41,7 @@ Common issues and how to fix them.
 
 1. Download data: `python scripts/download_all.py --source all`
 2. Ingest (extract, chunk, embed, store): `python scripts/ingest_all.py --source all`
-3. Ensure `DATA_DIR` (default: repo `data/`) is where you ran download/ingest and contains `chroma/` with the `medicare_rag` collection.
+3. Ensure `DATA_DIR` (default: repo `data/`) is where you ran download/ingest and contains `chroma/` with the `insurance_rag` collection.
 
 ---
 

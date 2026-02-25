@@ -1,35 +1,33 @@
-"""Topic clustering for fragmented Medicare content.
+"""Topic clustering for fragmented insurance content.
 
 Groups chunks by clinical/policy topic so that related content scattered
-across IOM chapters, MCD LCDs, and code documents can be consolidated
-into topic-level summaries.  This improves retrieval stability when users
-rephrase the same question in different ways.
+across source documents can be consolidated into topic-level summaries.
+This improves retrieval stability when users rephrase the same question
+in different ways.
 
 Each topic is defined by a set of keyword patterns.  A chunk may belong
-to multiple topics (e.g. "cardiac rehab billing codes" touches both the
-cardiac_rehab and billing topics).
+to multiple topics.
 
-Topic definitions are loaded from DATA_DIR/topic_definitions.json when
-present; otherwise the package default (medicare_rag/data/topic_definitions.json)
-is used.
+Topic definitions are loaded from the active domain's ``topics.json``
+when available; otherwise from ``DATA_DIR/topic_definitions.json`` or the
+package default (``insurance_rag/data/topic_definitions.json``).
 """
 
 import json
 import logging
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 from langchain_core.documents import Document
 
-from medicare_rag.config import DATA_DIR
+from insurance_rag.config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class TopicDef:
-    """Immutable definition of a Medicare topic cluster."""
+    """Immutable definition of a topic cluster."""
 
     name: str
     label: str
@@ -43,26 +41,40 @@ def _compile(raw: list[str]) -> tuple[re.Pattern[str], ...]:
 
 
 def _load_topic_definitions() -> list[TopicDef]:
-    """Load topic definitions from DATA_DIR/topic_definitions.json or package default."""
-    path = DATA_DIR / "topic_definitions.json"
-    if path.exists():
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError as e:
-            logger.warning("Could not read %s: %s; using package default", path, e)
-            raw = None
-    else:
-        raw = None
+    """Load topic definitions from the active domain, DATA_DIR, or package default."""
+    raw: str | None = None
 
+    # 1. Try the active domain's topic definitions
+    try:
+        from insurance_rag.config import DEFAULT_DOMAIN
+        from insurance_rag.domains import get_domain
+
+        domain = get_domain(DEFAULT_DOMAIN)
+        domain_path = domain.get_topic_definitions_path()
+        if domain_path.exists():
+            raw = domain_path.read_text(encoding="utf-8")
+    except (KeyError, ImportError, OSError) as e:
+        logger.debug("Domain topic definitions not available: %s", e)
+
+    # 2. Fallback: DATA_DIR/topic_definitions.json
+    if raw is None:
+        path = DATA_DIR / "topic_definitions.json"
+        if path.exists():
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except OSError as e:
+                logger.warning("Could not read %s: %s; using package default", path, e)
+
+    # 3. Fallback: package default
     if raw is None:
         from importlib.resources import files
 
-        pkg_path = files("medicare_rag") / "data" / "topic_definitions.json"
+        pkg_path = files("insurance_rag") / "data" / "topic_definitions.json"
         try:
             raw = pkg_path.read_text(encoding="utf-8")
         except Exception as e:
             raise FileNotFoundError(
-                f"Topic definitions not found at {path} or package default: {e}"
+                f"Topic definitions not found in domain, DATA_DIR, or package default: {e}"
             ) from e
 
     data = json.loads(raw)

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""CLI entry point for downloading IOM, MCD, and code files."""
+"""CLI entry point for downloading insurance data sources.
+
+Supports domain selection via ``--domain``.  Each domain registers its
+own downloaders and source kinds.
+"""
 import argparse
 import logging
 import sys
 
 import httpx
 
-from medicare_rag.config import RAW_DIR
-from medicare_rag.download import download_codes, download_iom, download_mcd
+from insurance_rag.config import domain_raw_dir
+from insurance_rag.domains import get_domain, list_domains
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,42 +20,59 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SOURCES = ("iom", "mcd", "codes", "all")
-
 
 def main() -> int:
+    available = list_domains()
     parser = argparse.ArgumentParser(
-        description="Download Medicare RAG data (IOM, MCD, codes)."
+        description="Download insurance RAG data sources."
+    )
+    parser.add_argument(
+        "--domain",
+        choices=available + ["all"],
+        default="medicare",
+        help=f"Domain to download data for (default: medicare). Available: {', '.join(available)}",
     )
     parser.add_argument(
         "--source",
-        choices=SOURCES,
         default="all",
-        help="Source to download: iom, mcd, codes, or all (default: all)",
+        help="Source kind within the domain (default: all). "
+        "Depends on domain; use --help after choosing a domain to see valid kinds.",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Re-download even if file already exists",
+        help="Re-download even if files already exist",
     )
     args = parser.parse_args()
 
-    raw_dir = RAW_DIR
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    domains_to_run = available if args.domain == "all" else [args.domain]
 
     try:
-        if args.source in ("iom", "all"):
-            logger.info("Downloading IOM manuals 100-02, 100-03, 100-04")
-            download_iom(raw_dir, force=args.force)
-        if args.source in ("mcd", "all"):
-            logger.info("Downloading MCD bulk data")
-            download_mcd(raw_dir, force=args.force)
-        if args.source in ("codes", "all"):
-            logger.info("Downloading ICD-10-CM and HCPCS code files")
-            download_codes(raw_dir, force=args.force)
-    except NotImplementedError as e:
-        logger.error("%s", e)
-        return 1
+        for domain_name in domains_to_run:
+            domain = get_domain(domain_name)
+            raw_dir = domain_raw_dir(domain_name)
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            downloaders = domain.get_downloaders()
+
+            if args.source == "all":
+                sources = list(downloaders.keys())
+            elif args.source in downloaders:
+                sources = [args.source]
+            else:
+                logger.error(
+                    "Unknown source %r for domain %s. Available: %s",
+                    args.source,
+                    domain_name,
+                    ", ".join(downloaders.keys()),
+                )
+                return 1
+
+            for source in sources:
+                logger.info(
+                    "[%s] Downloading %s data...", domain.display_name, source
+                )
+                downloaders[source](raw_dir, force=args.force)
+
     except httpx.HTTPError as e:
         logger.error("HTTP error during download: %s", e)
         return 1

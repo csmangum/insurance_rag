@@ -29,7 +29,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
-from medicare_rag.config import (
+from insurance_rag.config import (
     CROSS_SOURCE_MIN_PER_SOURCE,
     GET_META_BATCH_SIZE,
     HYBRID_KEYWORD_WEIGHT,
@@ -38,9 +38,9 @@ from medicare_rag.config import (
     MAX_QUERY_VARIANTS,
     RRF_K,
 )
-from medicare_rag.index.store import get_raw_collection
-from medicare_rag.query.expand import detect_source_relevance, expand_cross_source_query
-from medicare_rag.query.retriever import (
+from insurance_rag.index.store import get_raw_collection
+from insurance_rag.query.expand import detect_source_relevance, expand_cross_source_query
+from insurance_rag.query.retriever import (
     apply_topic_summary_boost,
     expand_lcd_query,
     is_lcd_query,
@@ -387,7 +387,7 @@ def get_hybrid_retriever(
         raise ImportError("rank-bm25 is required for hybrid retrieval")
 
     if embeddings is None or store is None:
-        from medicare_rag.index import get_embeddings, get_or_create_chroma
+        from insurance_rag.index import get_embeddings, get_or_create_chroma
 
         if embeddings is None:
             embeddings = get_embeddings()

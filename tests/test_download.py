@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from medicare_rag.download._manifest import file_sha256, write_manifest
-from medicare_rag.download._utils import sanitize_filename_from_url, stream_download
-from medicare_rag.download.codes import download_codes
-from medicare_rag.download.iom import download_iom
-from medicare_rag.download.mcd import _safe_extract_zip, download_mcd
+from insurance_rag.download._manifest import file_sha256, write_manifest
+from insurance_rag.download._utils import sanitize_filename_from_url, stream_download
+from insurance_rag.download.codes import download_codes
+from insurance_rag.download.iom import download_iom
+from insurance_rag.download.mcd import _safe_extract_zip, download_mcd
 
 
 def _minimal_zip_bytes() -> bytes:
@@ -51,7 +51,7 @@ def test_mcd_download(tmp_raw: Path) -> None:
     mock_stream_cm.__enter__ = MagicMock(return_value=mock_stream_response)
     mock_stream_cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("medicare_rag.download.mcd.httpx") as mock_httpx:
+    with patch("insurance_rag.download.mcd.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.stream.return_value = mock_stream_cm
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -90,7 +90,7 @@ def test_mcd_idempotency_skips_when_manifest_and_file_exist(tmp_raw: Path) -> No
         cm.__exit__ = MagicMock(return_value=False)
         return cm
 
-    with patch("medicare_rag.download.mcd.httpx") as mock_httpx:
+    with patch("insurance_rag.download.mcd.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.stream.side_effect = track_stream
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -141,7 +141,7 @@ def test_iom_download_discovers_pdfs_and_writes_manifest(tmp_raw: Path) -> None:
         cm.__exit__ = MagicMock(return_value=False)
         return cm
 
-    with patch("medicare_rag.download.iom.httpx") as mock_httpx:
+    with patch("insurance_rag.download.iom.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.get.side_effect = fake_get
         mock_client.stream.side_effect = fake_stream
@@ -189,7 +189,7 @@ def test_codes_download_hcpcs_and_manifest(tmp_raw: Path) -> None:
         cm.__exit__ = MagicMock(return_value=False)
         return cm
 
-    with patch("medicare_rag.download.codes.httpx") as mock_httpx:
+    with patch("insurance_rag.download.codes.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.get.side_effect = fake_get
         mock_client.stream.side_effect = fake_stream
@@ -237,8 +237,8 @@ def test_codes_download_icd10cm_when_url_set(tmp_raw: Path) -> None:
         return cm
 
     with (
-        patch("medicare_rag.download.codes.httpx") as mock_httpx,
-        patch("medicare_rag.download.codes.ICD10_CM_ZIP_URL", icd_url),
+        patch("insurance_rag.download.codes.httpx") as mock_httpx,
+        patch("insurance_rag.download.codes.ICD10_CM_ZIP_URL", icd_url),
     ):
         mock_client = MagicMock()
         mock_client.get.side_effect = fake_get
@@ -295,8 +295,8 @@ def test_codes_idempotency_skips_existing_file(tmp_raw: Path) -> None:
         return cm
 
     with (
-        patch("medicare_rag.download.codes.httpx") as mock_httpx,
-        patch("medicare_rag.download.codes.ICD10_CM_ZIP_URL", None),
+        patch("insurance_rag.download.codes.httpx") as mock_httpx,
+        patch("insurance_rag.download.codes.ICD10_CM_ZIP_URL", None),
     ):
         mock_client = MagicMock()
         mock_client.get.side_effect = track_get
@@ -446,7 +446,7 @@ def test_iom_duplicate_filenames_disambiguated(tmp_raw: Path) -> None:
         cm.__exit__ = MagicMock(return_value=False)
         return cm
 
-    with patch("medicare_rag.download.iom.httpx") as mock_httpx:
+    with patch("insurance_rag.download.iom.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.get.side_effect = fake_get
         mock_client.stream.side_effect = fake_stream
@@ -487,7 +487,7 @@ def test_mcd_redownloads_when_manifest_exists_but_files_missing(tmp_raw: Path) -
         cm.__exit__ = MagicMock(return_value=False)
         return cm
 
-    with patch("medicare_rag.download.mcd.httpx") as mock_httpx:
+    with patch("insurance_rag.download.mcd.httpx") as mock_httpx:
         mock_client = MagicMock()
         mock_client.stream.side_effect = track_stream
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -506,7 +506,7 @@ def test_config_raw_dir_under_data_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     import importlib
 
     monkeypatch.setenv("DATA_DIR", "/custom/data")
-    from medicare_rag import config as config_module
+    from insurance_rag import config as config_module
 
     importlib.reload(config_module)
     assert config_module.RAW_DIR == Path("/custom/data") / "raw"

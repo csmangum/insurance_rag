@@ -1,6 +1,6 @@
 """Tests for HCPCS / ICD-10-CM semantic enrichment."""
 
-from medicare_rag.ingest.enrich import (
+from insurance_rag.ingest.enrich import (
     enrich_hcpcs_text,
     enrich_icd10_text,
     get_hcpcs_enrichment,

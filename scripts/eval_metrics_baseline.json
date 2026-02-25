@@ -10,7 +10,7 @@
       {
         "name": "collection_accessible",
         "passed": true,
-        "detail": "collection=medicare_rag"
+        "detail": "collection=insurance_rag"
       },
       {
         "name": "collection_non_empty",

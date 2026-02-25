@@ -12,7 +12,7 @@ from pathlib import Path
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from medicare_rag.config import (
+from insurance_rag.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
     ENABLE_TOPIC_SUMMARIES,
@@ -23,7 +23,7 @@ from medicare_rag.config import (
     MIN_DOC_TEXT_LENGTH_FOR_SUMMARY,
     MIN_TOPIC_CLUSTER_CHUNKS,
 )
-from medicare_rag.ingest import SourceKind
+from insurance_rag.ingest import SourceKind
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ def chunk_documents(
 
     if enable_summaries:
         # Lazy import to avoid pulling summarize/cluster when summaries disabled.
-        from medicare_rag.ingest.summarize import generate_all_summaries
+        from insurance_rag.ingest.summarize import generate_all_summaries
 
         tagged, summaries = generate_all_summaries(
             documents,

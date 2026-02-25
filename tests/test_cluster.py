@@ -2,7 +2,7 @@
 
 from langchain_core.documents import Document
 
-from medicare_rag.ingest.cluster import (
+from insurance_rag.ingest.cluster import (
     TOPIC_DEFINITIONS,
     assign_topics,
     cluster_documents,

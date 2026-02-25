@@ -122,9 +122,9 @@ def main() -> int:
         logger.warning("Eval file is empty")
         return 0
 
-    from medicare_rag.config import CHROMA_DIR, COLLECTION_NAME, DATA_DIR
-    from medicare_rag.index import get_embeddings, get_or_create_chroma
-    from medicare_rag.query.retriever import get_retriever
+    from insurance_rag.config import CHROMA_DIR, COLLECTION_NAME, DATA_DIR
+    from insurance_rag.index import get_embeddings, get_or_create_chroma
+    from insurance_rag.query.retriever import get_retriever
 
     out_path = args.out if args.out is not None else DATA_DIR / "rag_eval_report.md"
 
@@ -154,7 +154,7 @@ def main() -> int:
     ]
 
     # Build RAG chain once before loop to avoid reloading LLM for every question
-    from medicare_rag.query.chain import build_rag_chain
+    from insurance_rag.query.chain import build_rag_chain
     try:
         rag_chain = build_rag_chain(retriever=retriever, k=args.k)
     except Exception as e:

@@ -1,13 +1,15 @@
-"""LCD-aware VectorStoreRetriever (Phase 4).
+"""Domain-aware VectorStoreRetriever (Phase 4).
 
-Provides a retriever that detects LCD/coverage-determination queries and
-applies query expansion plus source-filtered multi-query retrieval to
-improve hit rates on MCD policy content.
+Provides a retriever that detects domain-specific specialized queries
+(e.g. LCD/coverage-determination queries in Medicare) and applies query
+expansion plus source-filtered multi-query retrieval.
 
 Summary documents (``doc_type`` = ``document_summary`` or ``topic_summary``)
 are boosted in retrieval results to provide stable "anchor" chunks that
 match consistently regardless of query phrasing.
 """
+from __future__ import annotations
+
 import logging
 import re
 from typing import Any
@@ -16,121 +18,95 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
-from medicare_rag.config import LCD_RETRIEVAL_K
-from medicare_rag.index import get_embeddings, get_or_create_chroma
-from medicare_rag.index.store import get_raw_collection
+from insurance_rag.config import LCD_RETRIEVAL_K
+from insurance_rag.index import get_embeddings, get_or_create_chroma
+from insurance_rag.index.store import get_raw_collection
 
 logger = logging.getLogger(__name__)
 
-_LCD_QUERY_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(p, re.IGNORECASE)
-    for p in [
-        r"\blcds?\b",
-        r"\blocal coverage determination\b",
-        r"\bcoverage determination\b",
-        r"\bncd\b",
-        r"\bnational coverage determination\b",
-        r"\bmcd\b",
-        r"\bcontractor\b",
-        r"\bjurisdiction\b",
-        # MAC contractor names
-        r"\bnovitas\b",
-        r"\bfirst coast\b",
-        r"\bcgs\b",
-        r"\bngs\b",
-        r"\bwps\b",
-        r"\bpalmetto\b",
-        r"\bnoridian\b",
-        # Jurisdiction codes
-        r"\b[jJ][a-l]\b",
-        # Coverage + specific therapy patterns common in LCD queries
-        r"\bcover(?:ed)?\b.{0,40}\b(?:wound|hyperbaric|oxygen therapy|infusion|"
-        r"imaging|MRI|CT scan|ultrasound|physical therapy|"
-        r"cardiac rehab|chiropractic|acupuncture)\b",
-        r"\bcoverage\b.{0,30}\b(?:wound|hyperbaric|oxygen|infusion|"
-        r"imaging|MRI|CT|physical therapy|cardiac|"
-        r"chiropractic|acupuncture|prosthetic|orthotic)\b",
-        # Reverse: therapy term then coverage verb
-        r"\b(?:wound|hyperbaric|oxygen therapy|infusion|"
-        r"imaging|MRI|CT scan|physical therapy|cardiac rehab)"
-        r"\b.{0,40}\bcover(?:ed)?\b",
-    ]
-]
 
-_LCD_TOPIC_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(p, re.IGNORECASE), expansion)
-    for p, expansion in [
-        (r"\bcardiac\s*rehab", "cardiac rehabilitation program coverage criteria"),
-        (r"\bhyperbaric\s*oxygen", "hyperbaric oxygen therapy wound healing coverage indications"),
-        (r"\bphysical therapy", "outpatient physical therapy rehabilitation coverage"),
-        (r"\b(?:wound\s*care|wound\s*vac)", "wound care negative pressure therapy coverage"),
-        (r"\b(?:imaging|MRI|CT\s*scan)", "advanced diagnostic imaging coverage medical necessity"),
-    ]
-]
+def _get_domain_query_patterns() -> dict[str, Any]:
+    """Load specialized query patterns from the active domain."""
+    try:
+        from insurance_rag.config import DEFAULT_DOMAIN
+        from insurance_rag.domains import get_domain
+
+        return get_domain(DEFAULT_DOMAIN).get_query_patterns()
+    except (KeyError, ImportError):
+        return {}
 
 
 def is_lcd_query(query: str) -> bool:
-    """Return True if the query appears to be about LCD/coverage determinations."""
-    return any(p.search(query) for p in _LCD_QUERY_PATTERNS)
+    """Return True if the query matches the active domain's specialized query patterns.
 
-
-_STRIP_LCD_NOISE = re.compile(
-    r"\b(?:lcd|lcds|ncd|mcd|local coverage determination|"
-    r"national coverage determination|coverage determination|"
-    r"novitas|first coast|cgs|ngs|wps|palmetto|noridian|"
-    r"contractor|jurisdiction|"
-    r"[jJ][a-lA-L])\b",
-    re.IGNORECASE,
-)
-_STRIP_FILLER = re.compile(
-    r"\b(?:does|have|has|an|the|for|is|are|what|which|apply to)\b",
-    re.IGNORECASE,
-)
-
-
-def _strip_to_medical_concept(query: str) -> str:
-    """Remove LCD jargon, contractor names, and filler words to isolate
-    the medical concept from a coverage-determination query."""
-    cleaned = _STRIP_LCD_NOISE.sub("", query)
-    cleaned = _STRIP_FILLER.sub("", cleaned)
-    cleaned = re.sub(r"[()]+", " ", cleaned)
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ?.,;:")
-    return cleaned
+    For Medicare, this detects LCD/coverage-determination queries.
+    Kept as ``is_lcd_query`` for backward compatibility.
+    """
+    patterns = _get_domain_query_patterns().get("specialized_query_patterns", [])
+    return any(p.search(query) for p in patterns)
 
 
 def expand_lcd_query(query: str) -> list[str]:
-    """Return a list of expanded/reformulated queries for LCD retrieval.
+    """Return a list of expanded/reformulated queries for specialized retrieval.
 
     Produces up to three variants:
       1. The original query (unchanged).
       2. Original + topic-specific expansion terms.
-      3. A stripped medical-concept query (contractor/LCD terms removed)
-         so the embedding focuses on the clinical topic.
+      3. A stripped concept query (domain jargon removed) so the embedding
+         focuses on the core topic.
     """
+    domain_patterns = _get_domain_query_patterns()
+    topic_patterns = domain_patterns.get("specialized_topic_patterns", [])
+    strip_noise = domain_patterns.get("strip_noise_pattern")
+    strip_filler = domain_patterns.get("strip_filler_pattern")
+
     queries = [query]
 
-    topic_expansions = [
-        exp for pat, exp in _LCD_TOPIC_PATTERNS if pat.search(query)
-    ]
+    topic_expansions = [exp for pat, exp in topic_patterns if pat.search(query)]
 
     if topic_expansions:
         queries.append(f"{query} {' '.join(topic_expansions)}")
     else:
         queries.append(
-            f"{query} Local Coverage Determination LCD policy"
-            " coverage criteria"
+            f"{query} Local Coverage Determination LCD policy coverage criteria"
         )
 
-    concept = _strip_to_medical_concept(query)
+    concept = _strip_to_concept(query, strip_noise, strip_filler)
     if concept and concept.lower() != query.lower():
         queries.append(concept)
 
     return queries
 
 
+def _strip_to_medical_concept(query: str) -> str:
+    """Backward-compatible wrapper for _strip_to_concept using domain patterns."""
+    patterns = _get_domain_query_patterns()
+    return _strip_to_concept(
+        query,
+        patterns.get("strip_noise_pattern"),
+        patterns.get("strip_filler_pattern"),
+    )
+
+
+def _strip_to_concept(
+    query: str,
+    strip_noise: re.Pattern[str] | None,
+    strip_filler: re.Pattern[str] | None,
+) -> str:
+    """Remove domain jargon and filler words to isolate the core concept."""
+    cleaned = query
+    if strip_noise:
+        cleaned = strip_noise.sub("", cleaned)
+    if strip_filler:
+        cleaned = strip_filler.sub("", cleaned)
+    cleaned = re.sub(r"[()]+", " ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ?.,;:")
+    return cleaned
+
+
 def detect_query_topics(query: str) -> list[str]:
     """Return the list of topic cluster names relevant to the query."""
-    from medicare_rag.ingest.cluster import assign_topics
+    from insurance_rag.ingest.cluster import assign_topics
 
     return assign_topics(Document(page_content=query, metadata={}))
 
@@ -232,12 +208,11 @@ def apply_topic_summary_boost(
 
 
 def _deduplicate_docs(
-    doc_lists: list[list[Document]], max_k: int,
+    doc_lists: list[list[Document]],
+    max_k: int,
 ) -> list[Document]:
     """Merge doc lists via round-robin interleaving, deduplicating by
-    doc_id+chunk_index.  This ensures each query variant contributes
-    docs near the top of the final list rather than one variant
-    dominating all slots."""
+    doc_id+chunk_index."""
     seen: set[str] = set()
     merged: list[Document] = []
     max_len = max((len(dl) for dl in doc_lists), default=0)
@@ -259,17 +234,12 @@ def _deduplicate_docs(
 
 
 class LCDAwareRetriever(BaseRetriever):
-    """Retriever that boosts LCD/MCD retrieval via query expansion and source-filtered search.
+    """Retriever that boosts specialized retrieval via query expansion
+    and source-filtered search.
 
-    For non-LCD queries, delegates to standard similarity search with ``k`` results.
-    For LCD queries:
-      1. Computes a per-variant ``k`` as ``max(4, lcd_k // 3)``.
-      2. Runs the original query restricted to MCD source with this per-variant ``k``.
-      3. Runs expanded/reformulated MCD queries, each with the same per-variant ``k``.
-      4. Runs the original query with the general metadata filter (if any) using the
-         per-variant ``k``.
-      5. Merges and deduplicates results from all variants, returning up to ``lcd_k``
-         documents.
+    For non-specialized queries, delegates to standard similarity search.
+    For specialized queries (e.g. LCD in Medicare), runs multi-variant
+    source-filtered searches and merges results.
     """
 
     model_config = {"arbitrary_types_allowed": True}
@@ -295,8 +265,6 @@ class LCDAwareRetriever(BaseRetriever):
         return docs
 
     def _lcd_retrieve(self, query: str) -> list[Document]:
-        # If metadata_filter explicitly specifies a non-MCD source, skip LCD-aware
-        # retrieval to honor the user's source filter
         if (
             self.metadata_filter is not None
             and self.metadata_filter.get("source") not in (None, "mcd")
@@ -342,20 +310,11 @@ def get_retriever(
 ) -> BaseRetriever:
     """Return a hybrid retriever combining semantic and keyword search.
 
-    The hybrid retriever handles LCD-aware expansion, cross-source query
-    expansion, BM25 keyword search, and source diversification.  Falls
-    back to the simpler :class:`LCDAwareRetriever` when the ``rank-bm25``
-    dependency is unavailable.
-
-    Uses the same embeddings and persist directory as the index. Optional
-    metadata_filter is passed to Chroma's where clause (e.g. {"source": "iom"},
-    {"manual": "100-02"}, {"jurisdiction": "JL"}).
-
-    If embeddings and store are provided, they will be reused instead of
-    creating new instances, avoiding redundant model loading.
+    Falls back to :class:`LCDAwareRetriever` when ``rank-bm25`` is
+    unavailable.
     """
     try:
-        from medicare_rag.query.hybrid import get_hybrid_retriever
+        from insurance_rag.query.hybrid import get_hybrid_retriever
 
         return get_hybrid_retriever(
             k=k, metadata_filter=metadata_filter, embeddings=embeddings, store=store

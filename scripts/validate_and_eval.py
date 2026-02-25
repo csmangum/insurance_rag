@@ -53,14 +53,14 @@ EXPECTED_SOURCES = ("iom", "mcd", "codes")
 # ---------------------------------------------------------------------------
 
 def _load_store():
-    from medicare_rag.index import get_embeddings, get_or_create_chroma
+    from insurance_rag.index import get_embeddings, get_or_create_chroma
     embeddings = get_embeddings()
     store = get_or_create_chroma(embeddings)
     return store, embeddings
 
 
 def _load_retriever(k: int, metadata_filter: dict | None = None):
-    from medicare_rag.query.retriever import get_retriever
+    from insurance_rag.query.retriever import get_retriever
     return get_retriever(k=k, metadata_filter=metadata_filter)
 
 
@@ -70,7 +70,13 @@ def _load_retriever(k: int, metadata_filter: dict | None = None):
 
 def validate_index(store) -> dict:
     """Run comprehensive index validation. Returns a dict of results with 'passed' bool."""
-    from medicare_rag.config import CHROMA_DIR, COLLECTION_NAME, _REPO_ROOT
+    from insurance_rag.config import _REPO_ROOT, CHROMA_DIR, DEFAULT_DOMAIN
+
+    try:
+        from insurance_rag.domains import get_domain
+        COLLECTION_NAME = get_domain(DEFAULT_DOMAIN).collection_name
+    except (KeyError, ImportError):
+        COLLECTION_NAME = "medicare"
 
     results: dict = {
         "passed": True,

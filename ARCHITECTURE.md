@@ -173,7 +173,7 @@ flowchart LR
   Docs["List[Document]\n(chunks)"]
   Embed["embed.py\nHuggingFace Embeddings\n(all-MiniLM-L6-v2, 384-dim)"]
   Store["store.py\ncontent-hash dedup + batch upsert"]
-  Chroma["ChromaDB\ndata/chroma/\ncollection: medicare_rag"]
+  Chroma["ChromaDB\ndata/chroma/\ncollection: insurance_rag"]
 
   Docs --> Embed --> Store --> Chroma
 ```
@@ -281,7 +281,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  subgraph Root["src/medicare_rag/"]
+  subgraph Root["src/insurance_rag/"]
     Init["__init__.py\nPackage root"]
     Config["config.py\nCentralized configuration (env vars + defaults)"]
 
@@ -329,7 +329,7 @@ All configuration is centralized in a single module that loads `.env` via `pytho
 | `RAW_DIR` | `{DATA_DIR}/raw` | — |
 | `PROCESSED_DIR` | `{DATA_DIR}/processed` | — |
 | `CHROMA_DIR` | `{DATA_DIR}/chroma` | — |
-| `COLLECTION_NAME` | `"medicare_rag"` | — |
+| `COLLECTION_NAME` | `"insurance_rag"` | — |
 | `EMBEDDING_MODEL` | `"sentence-transformers/all-MiniLM-L6-v2"` | `EMBEDDING_MODEL` |
 | `LOCAL_LLM_MODEL` | `"TinyLlama/TinyLlama-1.1B-Chat-v1.0"` | `LOCAL_LLM_MODEL` |
 | `LOCAL_LLM_DEVICE` | `"auto"` | `LOCAL_LLM_DEVICE` |

@@ -1,7 +1,7 @@
-"""Streamlit app for Medicare RAG search and Q&A.
+"""Streamlit app for Insurance RAG search and Q&A.
 
-Supports:
-  - Hybrid retrieval (semantic + BM25) with LCD-aware query expansion
+Supports multiple insurance domains (Medicare, Auto, etc.) with:
+  - Hybrid retrieval (semantic + BM25) with domain-aware query expansion
   - Raw semantic search with distance scores
   - Optional RAG answers via local LLM
 
@@ -18,20 +18,18 @@ from typing import Any
 
 import streamlit as st
 
-from medicare_rag.config import (
-    COLLECTION_NAME,
-    EMBEDDING_MODEL,
-)
-from medicare_rag.index.embed import get_embeddings
-from medicare_rag.index.store import (
+from insurance_rag.config import EMBEDDING_MODEL
+from insurance_rag.domains import get_domain, list_domains
+from insurance_rag.index.embed import get_embeddings
+from insurance_rag.index.store import (
     GET_META_BATCH_SIZE,
     get_or_create_chroma,
     get_raw_collection,
 )
-from medicare_rag.query.retriever import get_retriever
+from insurance_rag.query.retriever import get_retriever
 
 try:
-    from medicare_rag.query.chain import run_rag as _run_rag
+    from insurance_rag.query.chain import run_rag as _run_rag
 
     _RAG_AVAILABLE = True
 except ImportError:
@@ -39,8 +37,8 @@ except ImportError:
     _RAG_AVAILABLE = False
 
 st.set_page_config(
-    page_title="Medicare RAG",
-    page_icon="🩺",
+    page_title="Insurance RAG",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -56,9 +54,9 @@ def _load_embeddings():
 
 
 @st.cache_resource(show_spinner="Connecting to ChromaDB...")
-def _load_store():
+def _load_store(collection_name: str):
     emb = _load_embeddings()
-    return get_or_create_chroma(emb)
+    return get_or_create_chroma(emb, collection_name=collection_name)
 
 
 def _run_hybrid_search(
@@ -77,32 +75,15 @@ def _run_hybrid_search(
 
 @st.cache_data(show_spinner=False, ttl=300)
 def _get_collection_meta(_store) -> dict[str, Any]:
-    """Gather aggregated metadata stats from the Chroma collection for filter widgets.
-
-    This function is intentionally cached with ``st.cache_data`` and a short TTL
-    (300 seconds). The TTL-based invalidation keeps the per-request overhead low
-    while still allowing updates to the underlying collection to be picked up
-    periodically without manual cache clears.
-
-    Metadata is read in batches of size ``GET_META_BATCH_SIZE`` via repeated
-    ``collection.get(...)`` calls instead of a single unbounded query. This
-    batching avoids hitting SQLite / Chroma limits on query size and reduces the
-    chance of database errors when the collection grows large.
-
-    The ``_store`` parameter is the cached Chroma store handle obtained from
-    ``_load_store()``. The leading underscore indicates that it is an internal
-    implementation detail (not user input). Streamlit excludes underscore-prefixed
-    parameters from the cache key hashing, so changes to the underlying store do
-    not directly invalidate this cache entry; instead, the short TTL controls how
-    frequently metadata is refreshed.
-    """
+    """Gather aggregated metadata stats from the Chroma collection for filter widgets."""
     collection = get_raw_collection(_store)
     if collection.count() == 0:
-        return {"count": 0, "sources": [], "manuals": [], "jurisdictions": []}
+        return {"count": 0, "sources": [], "manuals": [], "jurisdictions": [], "states": []}
 
     sources: set[str] = set()
     manuals: set[str] = set()
     jurisdictions: set[str] = set()
+    states: set[str] = set()
     total_seen = 0
 
     offset = 0
@@ -126,12 +107,15 @@ def _get_collection_meta(_store) -> dict[str, Any]:
                 manuals.add(str(m["manual"]))
             if m.get("jurisdiction"):
                 jurisdictions.add(str(m["jurisdiction"]))
+            if m.get("state"):
+                states.add(str(m["state"]))
 
     return {
         "count": total_seen,
         "sources": sorted(sources),
         "manuals": sorted(manuals),
         "jurisdictions": sorted(jurisdictions),
+        "states": sorted(states),
     }
 
 
@@ -142,32 +126,16 @@ _MODE_HYBRID = "Hybrid (recommended)"
 _MODE_RAW = "Raw semantic"
 
 # ---------------------------------------------------------------------------
-# Quick-check questions
-# ---------------------------------------------------------------------------
-QUICK_QUESTIONS: list[str] = [
-    "What is Medicare timely filing?",
-    "How does LCD coverage determination work?",
-    "Explain modifier 59 usage",
-    "What are HCPCS Level II codes?",
-    "ICD-10-CM coding guidelines overview",
-    "Medicare claims appeal process",
-    "What is a National Coverage Determination?",
-    "Outpatient prospective payment system basics",
-]
-
-# ---------------------------------------------------------------------------
-# CSS: clean, modern design (light theme)
+# CSS: clean, modern design
 # ---------------------------------------------------------------------------
 _CUSTOM_CSS = """
 <style>
-/* Main area */
 .main .block-container {
     padding-top: 2rem;
     padding-bottom: 3rem;
     max-width: 1100px;
 }
 
-/* Result card */
 div.result-card {
     border: 1px solid #e2e8f0;
     border-radius: 0.5rem;
@@ -221,7 +189,6 @@ div.result-card .content-preview {
     word-break: break-word;
 }
 
-/* Quick-question chips */
 .stButton > button[kind="secondary"] {
     border-radius: 0.5rem !important;
     font-size: 0.85rem !important;
@@ -243,6 +210,7 @@ def _build_metadata_filter(
     source_filter: str,
     manual_filter: str,
     jurisdiction_filter: str,
+    state_filter: str,
 ) -> dict | None:
     """Build a Chroma where-clause dict from sidebar selections."""
     parts: dict[str, str] = {}
@@ -252,6 +220,8 @@ def _build_metadata_filter(
         parts["manual"] = manual_filter
     if jurisdiction_filter and jurisdiction_filter != "All":
         parts["jurisdiction"] = jurisdiction_filter
+    if state_filter and state_filter != "All":
+        parts["state"] = state_filter
 
     if len(parts) > 1:
         return {"$and": [{k: v} for k, v in parts.items()]}
@@ -314,6 +284,7 @@ def _render_result_card(
         ("manual", meta.get("manual")),
         ("chapter", meta.get("chapter")),
         ("jurisdiction", meta.get("jurisdiction")),
+        ("state", meta.get("state")),
         ("effective_date", meta.get("effective_date")),
     ]
     for label, val in pill_keys:
@@ -353,9 +324,17 @@ def main() -> None:
 
     # ---- Sidebar ----
     with st.sidebar:
-        st.header("🔧 Settings")
+        st.header("Settings")
 
-        store = _load_store()
+        available_domains = list_domains()
+        domain_name = st.selectbox(
+            "Insurance Domain",
+            available_domains,
+            format_func=lambda d: get_domain(d).display_name,
+        )
+        domain = get_domain(domain_name)
+
+        store = _load_store(domain.collection_name)
         embeddings = _load_embeddings()
         meta_info = _get_collection_meta(store)
         doc_count = meta_info["count"]
@@ -365,28 +344,39 @@ def main() -> None:
             doc_count > 0 and coll_dim is not None and coll_dim != model_dim
         )
 
-        st.caption(f"**Collection:** `{COLLECTION_NAME}`")
+        st.caption(f"**Collection:** `{domain.collection_name}`")
         st.caption(f"**Documents:** {doc_count:,}")
         st.caption(f"**Model:** `{EMBEDDING_MODEL}`")
 
         st.divider()
 
         if doc_count == 0:
-            st.warning("Index is empty. Run `scripts/ingest_all.py` first.")
+            st.warning(
+                f"Index is empty for {domain.display_name}. "
+                f"Run `scripts/ingest_all.py --domain {domain_name}` first."
+            )
         elif dimension_mismatch:
             st.error(f"Dimension mismatch: index={coll_dim}, model={model_dim}")
 
-        # Filters
         st.subheader("Filters")
 
         source_options = ["All"] + [s.upper() for s in meta_info["sources"]]
         source_filter = st.selectbox("Source", source_options, index=0)
 
-        manual_options = ["All"] + meta_info["manuals"]
-        manual_filter = st.selectbox("Manual", manual_options, index=0)
+        manual_filter = "All"
+        if meta_info["manuals"]:
+            manual_options = ["All"] + meta_info["manuals"]
+            manual_filter = st.selectbox("Manual", manual_options, index=0)
 
-        jurisdiction_options = ["All"] + meta_info["jurisdictions"]
-        jurisdiction_filter = st.selectbox("Jurisdiction", jurisdiction_options, index=0)
+        jurisdiction_filter = "All"
+        if meta_info["jurisdictions"]:
+            jurisdiction_options = ["All"] + meta_info["jurisdictions"]
+            jurisdiction_filter = st.selectbox("Jurisdiction", jurisdiction_options, index=0)
+
+        state_filter = "All"
+        if meta_info["states"]:
+            state_options = ["All"] + meta_info["states"]
+            state_filter = st.selectbox("State", state_options, index=0)
 
         st.divider()
         st.subheader("Options")
@@ -396,7 +386,8 @@ def main() -> None:
         search_mode = st.radio(
             "Search mode",
             [_MODE_HYBRID, _MODE_RAW],
-            help="Hybrid uses semantic + BM25 with LCD-aware expansion. Raw shows distance scores.",
+            help="Hybrid uses semantic + BM25 with domain-aware expansion. "
+            "Raw shows distance scores.",
         )
 
         use_threshold: bool = False
@@ -418,32 +409,35 @@ def main() -> None:
         source_filter or "All",
         manual_filter or "All",
         jurisdiction_filter or "All",
+        state_filter or "All",
     )
 
     # ---- Main area ----
-    st.title("Medicare RAG")
+    st.title(f"{domain.display_name} RAG")
     st.markdown(
-        "Search Medicare Revenue Cycle documents using hybrid retrieval (semantic + keyword). "
-        "Ask questions and get cited answers."
+        f"Search {domain.display_name} documents using hybrid retrieval "
+        "(semantic + keyword). Ask questions and get cited answers."
     )
 
-    # Tabs: Search | RAG Answer
-    tab_search, tab_rag = st.tabs(["🔍 Search", "💬 RAG Answer"])
+    tab_search, tab_rag = st.tabs(["Search", "RAG Answer"])
+
+    quick_questions = domain.get_quick_questions()
 
     # ---- Search tab ----
     with tab_search:
-        st.markdown("#### Quick questions")
-        bubble_cols = st.columns(4)
-        for i, q in enumerate(QUICK_QUESTIONS):
-            col = bubble_cols[i % 4]
-            if col.button(q, key=f"bubble_{i}", use_container_width=True):
-                st.session_state.search_input = q
+        if quick_questions:
+            st.markdown("#### Quick questions")
+            bubble_cols = st.columns(4)
+            for i, q in enumerate(quick_questions):
+                col = bubble_cols[i % 4]
+                if col.button(q, key=f"bubble_{i}", use_container_width=True):
+                    st.session_state.search_input = q
 
-        st.divider()
+            st.divider()
 
         query = st.text_input(
             "Search query",
-            placeholder="Type your Medicare RCM question...",
+            placeholder=f"Type your {domain.display_name} question...",
             key="search_input",
         )
 
@@ -503,16 +497,19 @@ def main() -> None:
                     raise
 
         elif query and doc_count == 0:
-            st.error("Index is empty. Run `scripts/ingest_all.py` first.")
+            st.error(
+                f"Index is empty for {domain.display_name}. "
+                f"Run `scripts/ingest_all.py --domain {domain_name}` first."
+            )
 
     # ---- RAG tab ----
     with tab_rag:
         if "rag_result" not in st.session_state:
-            st.session_state.rag_result = None  # (answer, source_docs, elapsed) or None
+            st.session_state.rag_result = None
 
         rag_query = st.text_input(
             "Ask a question",
-            placeholder="e.g. What is Medicare timely filing?",
+            placeholder=f"e.g. {quick_questions[0] if quick_questions else 'Ask a question...'}",
             key="rag_input",
         )
 

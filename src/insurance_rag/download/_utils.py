@@ -4,7 +4,7 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 
-from medicare_rag.config import DOWNLOAD_TIMEOUT
+from insurance_rag.config import DOWNLOAD_TIMEOUT
 
 _ALLOWED_SCHEMES = ("http", "https")
 
