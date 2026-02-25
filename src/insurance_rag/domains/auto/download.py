@@ -122,32 +122,14 @@ def download_regulations(raw_dir: Path, *, force: bool = False) -> None:
         for key, url in REGULATIONS_URLS.items():
             name = f"{key}.pdf"
             dest = out_base / name
-            if dest.exists() and not force:
-                logger.debug("Skipping (exists): %s", dest)
+            logger.info("Downloading %s -> %s", url, dest)
+            ok = _download_url_to_file(client, url, dest, force=force, binary=True)
+            if ok:
                 try:
                     h = file_sha256(dest)
                 except OSError:
                     h = None
                 files_with_hashes.append((dest, h))
-                continue
-            try:
-                logger.info("Downloading %s -> %s", url, dest)
-                stream_download(client, url, dest)
-                try:
-                    h = file_sha256(dest)
-                except OSError:
-                    h = None
-                files_with_hashes.append((dest, h))
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    logger.warning("Skipping (404): %s", url)
-                elif e.response.status_code == 403:
-                    logger.warning(
-                        "Skipping (403 Forbidden): %s — site may block script requests",
-                        url,
-                    )
-                else:
-                    raise
 
     manifest_path = out_base / "manifest.json"
     write_manifest(
@@ -200,9 +182,7 @@ def download_forms(raw_dir: Path, *, force: bool = False) -> None:
                 continue
             try:
                 logger.info("Downloading %s -> %s", url, dest)
-                ok = _download_url_to_file(
-                    client, url, dest, force=force, binary=not is_html
-                )
+                ok = _download_url_to_file(client, url, dest, force=force, binary=not is_html)
                 if ok:
                     try:
                         h = file_sha256(dest)
@@ -254,9 +234,7 @@ def download_claims(raw_dir: Path, *, force: bool = False) -> None:
                 continue
             try:
                 logger.info("Downloading %s -> %s", url, dest)
-                ok = _download_url_to_file(
-                    client, url, dest, force=force, binary=not is_html
-                )
+                ok = _download_url_to_file(client, url, dest, force=force, binary=not is_html)
                 if ok:
                     try:
                         h = file_sha256(dest)
@@ -296,32 +274,14 @@ def download_rates(raw_dir: Path, *, force: bool = False) -> None:
             if not name.lower().endswith(".pdf"):
                 name = name + ".pdf" if "." not in name else name.rsplit(".", 1)[0] + ".pdf"
             dest = out_base / name
-            if dest.exists() and not force:
-                logger.debug("Skipping (exists): %s", dest)
+            logger.info("Downloading %s -> %s", url, dest)
+            ok = _download_url_to_file(client, url, dest, force=force, binary=True)
+            if ok:
                 try:
                     h = file_sha256(dest)
                 except OSError:
                     h = None
                 files_with_hashes.append((dest, h))
-                continue
-            try:
-                logger.info("Downloading %s -> %s", url, dest)
-                stream_download(client, url, dest)
-                try:
-                    h = file_sha256(dest)
-                except OSError:
-                    h = None
-                files_with_hashes.append((dest, h))
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    logger.warning("Skipping (404): %s", url)
-                elif e.response.status_code == 403:
-                    logger.warning(
-                        "Skipping (403 Forbidden): %s — site may block script requests",
-                        url,
-                    )
-                else:
-                    raise
 
     manifest_path = out_base / "manifest.json"
     write_manifest(
