@@ -68,12 +68,13 @@ class TestGetCollectionMeta:
         class MockStore:
             _collection = MockCollection()
 
-        result = app._get_collection_meta(MockStore())
+        result = app._get_collection_meta("medicare", MockStore())
         assert result == {
             "count": 0,
             "sources": [],
             "manuals": [],
             "jurisdictions": [],
+            "states": [],
         }
 
     def test_single_batch_aggregates_metadata(self) -> None:
@@ -96,7 +97,7 @@ class TestGetCollectionMeta:
         class MockStore:
             _collection = MockCollection()
 
-        result = app._get_collection_meta(MockStore())
+        result = app._get_collection_meta("medicare", MockStore())
         assert result["count"] == 2
         assert result["sources"] == ["iom", "mcd"]
         assert result["manuals"] == ["100-02", "L12345"]
@@ -131,7 +132,7 @@ class TestGetCollectionMeta:
         class MockStore:
             _collection = MockCollection()
 
-        result = app._get_collection_meta(MockStore())
+        result = app._get_collection_meta("medicare", MockStore())
         assert result["count"] == 600
         assert sorted(result["sources"]) == ["codes", "iom", "mcd"]
         assert sorted(result["manuals"]) == ["100-02", "100-03"]

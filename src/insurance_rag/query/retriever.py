@@ -25,6 +25,24 @@ from insurance_rag.index.store import get_raw_collection
 logger = logging.getLogger(__name__)
 
 
+def _resolve_domain_name(domain_name: str | None) -> str:
+    """Resolve domain name to a valid one. Falls back to DEFAULT_DOMAIN if invalid."""
+    if domain_name is None:
+        from insurance_rag.config import DEFAULT_DOMAIN
+
+        return DEFAULT_DOMAIN
+    try:
+        from insurance_rag.domains import get_domain
+
+        get_domain(domain_name)
+        return domain_name
+    except KeyError:
+        from insurance_rag.config import DEFAULT_DOMAIN
+
+        logger.warning("Unknown domain %r, falling back to %r", domain_name, DEFAULT_DOMAIN)
+        return DEFAULT_DOMAIN
+
+
 def _get_domain_query_patterns(domain_name: str | None = None) -> dict[str, Any]:
     """Load specialized query patterns from the given domain (or default)."""
     if domain_name is None:
@@ -280,10 +298,13 @@ class LCDAwareRetriever(BaseRetriever):
 
     def _lcd_retrieve(self, query: str) -> list[Document]:
         spec_filter = None
-        if self.domain_name:
+        resolved = _resolve_domain_name(self.domain_name)
+        try:
             from insurance_rag.domains import get_domain
 
-            spec_filter = get_domain(self.domain_name).get_specialized_source_filter()
+            spec_filter = get_domain(resolved).get_specialized_source_filter()
+        except KeyError:
+            logger.warning("Unknown domain %r, skipping specialized source filter", resolved)
 
         if spec_filter and self.metadata_filter is not None:
             req_source = spec_filter.get("source")
@@ -340,8 +361,9 @@ def get_retriever(
     """Return a hybrid retriever combining semantic and keyword search.
 
     Falls back to :class:`LCDAwareRetriever` when ``rank-bm25`` is
-    unavailable.
+    unavailable. Invalid domain names fall back to DEFAULT_DOMAIN.
     """
+    resolved = _resolve_domain_name(domain_name)
     try:
         from insurance_rag.query.hybrid import get_hybrid_retriever
 
@@ -350,7 +372,7 @@ def get_retriever(
             metadata_filter=metadata_filter,
             embeddings=embeddings,
             store=store,
-            domain_name=domain_name,
+            domain_name=resolved,
         )
     except ImportError:
         pass
@@ -358,16 +380,14 @@ def get_retriever(
     if embeddings is None:
         embeddings = get_embeddings()
     if store is None:
-        coll = None
-        if domain_name:
-            from insurance_rag.domains import get_domain
+        from insurance_rag.domains import get_domain
 
-            coll = get_domain(domain_name).collection_name
+        coll = get_domain(resolved).collection_name
         store = get_or_create_chroma(embeddings, collection_name=coll)
     return LCDAwareRetriever(
         store=store,
         k=k,
         lcd_k=max(k, LCD_RETRIEVAL_K),
         metadata_filter=metadata_filter,
-        domain_name=domain_name,
+        domain_name=resolved,
     )

@@ -41,6 +41,7 @@ from insurance_rag.config import (
 from insurance_rag.index.store import get_raw_collection
 from insurance_rag.query.expand import detect_source_relevance, expand_cross_source_query
 from insurance_rag.query.retriever import (
+    _resolve_domain_name,
     apply_topic_summary_boost,
     expand_lcd_query,
     is_lcd_query,
@@ -340,10 +341,13 @@ class HybridRetriever(BaseRetriever):
             )
 
         spec_filter = None
-        if self.domain_name:
+        resolved = _resolve_domain_name(self.domain_name)
+        try:
             from insurance_rag.domains import get_domain
 
-            spec_filter = get_domain(self.domain_name).get_specialized_source_filter()
+            spec_filter = get_domain(resolved).get_specialized_source_filter()
+        except KeyError:
+            logger.warning("Unknown domain %r, skipping specialized source filter", resolved)
 
         if spec_filter and is_lcd_query(query, self.domain_name):
             source_filter = {**spec_filter}
@@ -391,6 +395,7 @@ def get_hybrid_retriever(
 
     Raises ImportError if rank-bm25 is not installed, so callers (e.g.
     get_retriever) can catch it and fall back to a non-hybrid retriever.
+    Invalid domain names fall back to DEFAULT_DOMAIN.
 
     If embeddings and store are provided, they will be reused instead of
     creating new instances, avoiding redundant model loading.
@@ -398,17 +403,16 @@ def get_hybrid_retriever(
     if not _HAS_BM25:
         raise ImportError("rank-bm25 is required for hybrid retrieval")
 
+    resolved = _resolve_domain_name(domain_name)
     if embeddings is None or store is None:
         from insurance_rag.index import get_embeddings, get_or_create_chroma
 
         if embeddings is None:
             embeddings = get_embeddings()
         if store is None:
-            coll = None
-            if domain_name:
-                from insurance_rag.domains import get_domain
+            from insurance_rag.domains import get_domain
 
-                coll = get_domain(domain_name).collection_name
+            coll = get_domain(resolved).collection_name
             store = get_or_create_chroma(embeddings, collection_name=coll)
 
     return HybridRetriever(
@@ -416,5 +420,5 @@ def get_hybrid_retriever(
         k=k,
         lcd_k=max(k, LCD_RETRIEVAL_K),
         metadata_filter=metadata_filter,
-        domain_name=domain_name,
+        domain_name=resolved,
     )

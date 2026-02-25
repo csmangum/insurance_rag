@@ -10,8 +10,10 @@ from insurance_rag.index.store import upsert_documents
 from insurance_rag.query.retriever import (
     LCDAwareRetriever,
     _deduplicate_docs,
+    _resolve_domain_name,
     _strip_to_medical_concept,
     expand_lcd_query,
+    get_retriever,
     is_lcd_query,
 )
 
@@ -53,6 +55,24 @@ def test_get_retriever_returns_k_docs_with_metadata(chroma_dir: Path) -> None:
         for d in results:
             assert "source" in d.metadata
             assert "doc_id" in d.metadata
+
+
+def test_resolve_domain_name_invalid_falls_back_to_default() -> None:
+    """Invalid domain_name falls back to DEFAULT_DOMAIN without raising."""
+    resolved = _resolve_domain_name("nonexistent_domain")
+    from insurance_rag.config import DEFAULT_DOMAIN
+
+    assert resolved == DEFAULT_DOMAIN
+
+
+def test_get_retriever_invalid_domain_does_not_crash() -> None:
+    """get_retriever with invalid domain_name does not raise KeyError."""
+    mock_store = MagicMock()
+    mock_store.similarity_search.return_value = []
+    retriever = get_retriever(
+        k=2, domain_name="invalid_domain_xyz", embeddings=MagicMock(), store=mock_store
+    )
+    assert retriever is not None
 
 
 @pytest.mark.skipif(not _chroma_available, reason="ChromaDB not available")
@@ -391,6 +411,16 @@ class TestLCDAwareRetriever:
         store.similarity_search.assert_called_once_with(
             "LCD cardiac rehab coverage", k=5, filter={"source": "iom"}
         )
+
+    def test_lcd_query_with_invalid_domain_does_not_crash(self):
+        """LCDAwareRetriever with invalid domain_name falls back gracefully."""
+        store = self._make_mock_store()
+        retriever = LCDAwareRetriever(
+            store=store, k=5, lcd_k=12, domain_name="invalid_domain_xyz"
+        )
+        # Should not raise; invalid domain falls back to DEFAULT_DOMAIN
+        results = retriever.invoke("LCD cardiac rehab")
+        assert len(results) >= 0
 
 
 def test_run_eval_returns_metrics_for_one_question(tmp_path: Path) -> None:

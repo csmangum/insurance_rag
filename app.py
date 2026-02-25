@@ -79,8 +79,12 @@ def _run_hybrid_search(
 
 
 @st.cache_data(show_spinner=False, ttl=300)
-def _get_collection_meta(_store) -> dict[str, Any]:
-    """Gather aggregated metadata stats from the Chroma collection for filter widgets."""
+def _get_collection_meta(collection_name: str, _store) -> dict[str, Any]:
+    """Gather aggregated metadata stats from the Chroma collection for filter widgets.
+
+    collection_name is included in the cache key so switching domains fetches
+    fresh metadata; _store is excluded (unhashable) but used for the actual query.
+    """
     collection = get_raw_collection(_store)
     if collection.count() == 0:
         return {"count": 0, "sources": [], "manuals": [], "jurisdictions": [], "states": []}
@@ -341,7 +345,7 @@ def main() -> None:
 
         store = _load_store(domain.collection_name)
         embeddings = _load_embeddings()
-        meta_info = _get_collection_meta(store)
+        meta_info = _get_collection_meta(domain.collection_name, store)
         doc_count = meta_info["count"]
 
         coll_dim, model_dim = _get_embedding_dimensions(store, embeddings)

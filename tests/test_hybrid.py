@@ -595,6 +595,7 @@ class TestHybridRetriever:
 class TestGetRetrieverIntegration:
 
     def test_get_retriever_returns_hybrid_when_available(self):
+        from insurance_rag.config import DEFAULT_DOMAIN
         from insurance_rag.query.retriever import get_retriever
 
         with patch("insurance_rag.query.hybrid.get_hybrid_retriever") as mock_factory:
@@ -603,7 +604,11 @@ class TestGetRetrieverIntegration:
 
         assert retriever is mock_factory.return_value
         mock_factory.assert_called_once_with(
-            k=10, metadata_filter={"source": "iom"}, embeddings=None, store=None
+            k=10,
+            metadata_filter={"source": "iom"},
+            embeddings=None,
+            store=None,
+            domain_name=DEFAULT_DOMAIN,
         )
 
     def test_get_hybrid_retriever_raises_when_bm25_unavailable(self):
