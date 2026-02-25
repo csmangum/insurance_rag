@@ -36,27 +36,34 @@ class AutoInsuranceDomain(InsuranceDomain):
         return ["regulations", "forms", "claims", "rates"]
 
     def get_downloaders(self) -> dict[str, Any]:
-        def _download_placeholder(raw_dir: Path, *, force: bool = False) -> None:
-            logger.info(
-                "Auto insurance downloader placeholder — "
-                "implement data source connectors for state DOI regulations, "
-                "NAIC model laws, ISO forms, and rate filings."
-            )
-            raw_dir.mkdir(parents=True, exist_ok=True)
+        from insurance_rag.domains.auto.download import (
+            download_claims,
+            download_forms,
+            download_rates,
+            download_regulations,
+        )
 
-        return {sk: _download_placeholder for sk in self.source_kinds}
+        return {
+            "regulations": download_regulations,
+            "forms": download_forms,
+            "claims": download_claims,
+            "rates": download_rates,
+        }
 
     def get_extractors(self) -> dict[str, Any]:
-        def _extract_placeholder(
-            processed_dir: Path, raw_dir: Path, *, force: bool = False
-        ) -> list[tuple[Path, Path]]:
-            logger.info(
-                "Auto insurance extractor placeholder — "
-                "implement parsing for auto insurance document formats."
-            )
-            return []
+        from insurance_rag.domains.auto.extract import (
+            extract_claims,
+            extract_forms,
+            extract_rates,
+            extract_regulations,
+        )
 
-        return {sk: _extract_placeholder for sk in self.source_kinds}
+        return {
+            "regulations": extract_regulations,
+            "forms": extract_forms,
+            "claims": extract_claims,
+            "rates": extract_rates,
+        }
 
     def get_enricher(self) -> Any | None:
         return None
