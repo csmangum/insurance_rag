@@ -13,7 +13,7 @@ from collections import Counter
 
 from langchain_core.documents import Document
 
-from medicare_rag.ingest.cluster import (
+from insurance_rag.ingest.cluster import (
     cluster_documents,
     get_topic_def,
     tag_documents_with_topics,
@@ -138,6 +138,7 @@ def generate_topic_summary(
     *,
     max_sentences: int = 10,
     min_chunks: int = 2,
+    domain_name: str | None = None,
 ) -> Document | None:
     """Generate a consolidated summary for a topic cluster.
 
@@ -150,7 +151,7 @@ def generate_topic_summary(
     if len(chunks) < min_chunks:
         return None
 
-    topic_def = get_topic_def(topic_name)
+    topic_def = get_topic_def(topic_name, domain_name=domain_name)
     label = topic_def.label if topic_def else topic_name
     prefix = topic_def.summary_prefix if topic_def else f"{topic_name}: "
 
@@ -208,6 +209,7 @@ def generate_all_summaries(
     max_topic_summary_sentences: int = 10,
     min_topic_chunks: int = 2,
     min_doc_text_length: int = 200,
+    domain_name: str | None = None,
 ) -> tuple[list[Document], list[Document]]:
     """Generate document-level and topic-cluster summaries.
 
@@ -229,7 +231,7 @@ def generate_all_summaries(
         metadata added.  summary_documents — new Document instances for
         document-level and topic-cluster summaries.
     """
-    tagged = tag_documents_with_topics(documents)
+    tagged = tag_documents_with_topics(documents, domain_name=domain_name)
 
     summaries: list[Document] = []
 
@@ -257,7 +259,9 @@ def generate_all_summaries(
                 s for s in summaries if s.metadata.get("doc_type") == "document_summary"
             ]
             if doc_summaries:
-                tagged_doc_summaries = tag_documents_with_topics(doc_summaries)
+                tagged_doc_summaries = tag_documents_with_topics(
+                    doc_summaries, domain_name=domain_name
+                )
                 # Replace untagged document summaries with tagged ones
                 summaries = [
                     s for s in summaries if s.metadata.get("doc_type") != "document_summary"
@@ -265,13 +269,14 @@ def generate_all_summaries(
                 summaries.extend(tagged_doc_summaries)
 
     # Topic-cluster summaries
-    clusters = cluster_documents(tagged)
+    clusters = cluster_documents(tagged, domain_name=domain_name)
     for topic_name, cluster_docs in clusters.items():
         topic_summary = generate_topic_summary(
             topic_name,
             cluster_docs,
             max_sentences=max_topic_summary_sentences,
             min_chunks=min_topic_chunks,
+            domain_name=domain_name,
         )
         if topic_summary:
             summaries.append(topic_summary)

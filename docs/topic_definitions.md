@@ -23,7 +23,7 @@ Patterns are compiled with `re.IGNORECASE`. A chunk may belong to multiple topic
    If this path exists, it is used. `DATA_DIR` is set in `.env` or defaults to the repo `data/` directory.
 
 2. **Package default:**  
-   `src/medicare_rag/data/topic_definitions.json`  
+   `src/insurance_rag/data/topic_definitions.json`  
    Used when the file above does not exist. Shipped with the package.
 
 To add or change topics without editing the package, create or edit `data/topic_definitions.json` (after at least one run that creates `data/`).

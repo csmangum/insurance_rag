@@ -642,8 +642,7 @@ class TestValidateIndex:
 
     def test_validation_passes_healthy_index(self, mod, tmp_path):
         store = self._make_mock_store()
-        with patch("medicare_rag.config.CHROMA_DIR", tmp_path), \
-             patch("medicare_rag.config.COLLECTION_NAME", "test"):
+        with patch("insurance_rag.config.CHROMA_DIR", tmp_path):
             tmp_path.mkdir(exist_ok=True)
             result = mod.validate_index(store)
 
@@ -653,16 +652,14 @@ class TestValidateIndex:
     def test_validation_fails_missing_dir(self, mod, tmp_path):
         store = self._make_mock_store()
         missing = tmp_path / "nonexistent"
-        with patch("medicare_rag.config.CHROMA_DIR", missing), \
-             patch("medicare_rag.config.COLLECTION_NAME", "test"):
+        with patch("insurance_rag.config.CHROMA_DIR", missing):
             result = mod.validate_index(store)
 
         assert result["passed"] is False
 
     def test_validation_fails_empty_collection(self, mod, tmp_path):
         store = self._make_mock_store(count=0, ids=[], metadatas=[], documents=[])
-        with patch("medicare_rag.config.CHROMA_DIR", tmp_path), \
-             patch("medicare_rag.config.COLLECTION_NAME", "test"):
+        with patch("insurance_rag.config.CHROMA_DIR", tmp_path):
             tmp_path.mkdir(exist_ok=True)
             result = mod.validate_index(store)
 
@@ -673,8 +670,7 @@ class TestValidateIndex:
             {"source": "iom"},  # missing doc_id and content_hash
         ]
         store = self._make_mock_store(count=1, ids=["d1"], metadatas=metadatas, documents=["text"])
-        with patch("medicare_rag.config.CHROMA_DIR", tmp_path), \
-             patch("medicare_rag.config.COLLECTION_NAME", "test"):
+        with patch("insurance_rag.config.CHROMA_DIR", tmp_path):
             tmp_path.mkdir(exist_ok=True)
             result = mod.validate_index(store)
 
@@ -696,8 +692,7 @@ class TestValidateIndex:
             metadatas=metadatas,
             documents=["t1", "t2", "t3", "t4"],
         )
-        with patch("medicare_rag.config.CHROMA_DIR", tmp_path), \
-             patch("medicare_rag.config.COLLECTION_NAME", "test"):
+        with patch("insurance_rag.config.CHROMA_DIR", tmp_path):
             tmp_path.mkdir(exist_ok=True)
             result = mod.validate_index(store)
 
@@ -714,8 +709,7 @@ class TestValidateIndex:
             documents=["Normal content", ""],
             embeddings=[[0.1] * 384, [0.2] * 384],
         )
-        with patch("medicare_rag.config.CHROMA_DIR", tmp_path), \
-             patch("medicare_rag.config.COLLECTION_NAME", "test"):
+        with patch("insurance_rag.config.CHROMA_DIR", tmp_path):
             tmp_path.mkdir(exist_ok=True)
             result = mod.validate_index(store)
 

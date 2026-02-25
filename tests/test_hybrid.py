@@ -6,12 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 
-from medicare_rag.query.expand import (
+from insurance_rag.query.expand import (
     _apply_synonyms,
     detect_source_relevance,
     expand_cross_source_query,
 )
-from medicare_rag.query.hybrid import (
+from insurance_rag.query.hybrid import (
     BM25Index,
     HybridRetriever,
     ensure_source_diversity,
@@ -263,7 +263,7 @@ class TestBM25Index:
             },
         ]
         idx = BM25Index()
-        with patch("medicare_rag.query.hybrid.GET_META_BATCH_SIZE", batch_size):
+        with patch("insurance_rag.query.hybrid.GET_META_BATCH_SIZE", batch_size):
             idx.ensure_built(mock)
         results = idx.search("xyz", k=5)
         assert len(results) >= 1
@@ -502,14 +502,14 @@ class TestHybridRetriever:
     def test_returns_results(self):
         store = self._make_mock_store()
         retriever = HybridRetriever(store=store, k=5)
-        with patch("medicare_rag.query.hybrid._bm25_index", new=BM25Index()):
+        with patch("insurance_rag.query.hybrid._bm25_index", new=BM25Index()):
             results = retriever.invoke("Medicare coverage")
         assert len(results) > 0
 
     def test_lcd_query_runs_more_searches(self):
         store = self._make_mock_store()
         retriever = HybridRetriever(store=store, k=5, lcd_k=12)
-        with patch("medicare_rag.query.hybrid._bm25_index", new=BM25Index()):
+        with patch("insurance_rag.query.hybrid._bm25_index", new=BM25Index()):
             retriever.invoke("Medicare Part B")
             non_lcd_calls = store.similarity_search.call_count
 
@@ -524,7 +524,7 @@ class TestHybridRetriever:
         retriever = HybridRetriever(
             store=store, k=5, metadata_filter={"source": "iom"}
         )
-        with patch("medicare_rag.query.hybrid._bm25_index", new=BM25Index()):
+        with patch("insurance_rag.query.hybrid._bm25_index", new=BM25Index()):
             retriever.invoke("test query")
 
         calls = store.similarity_search.call_args_list
@@ -537,7 +537,7 @@ class TestHybridRetriever:
         store = self._make_mock_store(docs=[])
         store.similarity_search.return_value = []
         retriever = HybridRetriever(store=store, k=5)
-        with patch("medicare_rag.query.hybrid._bm25_index", new=BM25Index()):
+        with patch("insurance_rag.query.hybrid._bm25_index", new=BM25Index()):
             results = retriever.invoke("any query")
         assert results == []
 
@@ -545,7 +545,7 @@ class TestHybridRetriever:
         doc = _doc("shared content", "iom", "d1")
         store = self._make_mock_store(docs=[doc])
         retriever = HybridRetriever(store=store, k=5)
-        with patch("medicare_rag.query.hybrid._bm25_index", new=BM25Index()):
+        with patch("insurance_rag.query.hybrid._bm25_index", new=BM25Index()):
             results = retriever.invoke("test query")
         keys = [
             (d.metadata["doc_id"], d.metadata["chunk_index"]) for d in results
@@ -558,7 +558,7 @@ class TestHybridRetriever:
         retriever = HybridRetriever(
             store=store, k=5, metadata_filter={"source": "iom"}
         )
-        with patch("medicare_rag.query.hybrid._bm25_index", new=BM25Index()):
+        with patch("insurance_rag.query.hybrid._bm25_index", new=BM25Index()):
             retriever.invoke("LCD for cardiac rehab")
         for call in store.similarity_search.call_args_list:
             filt = call.kwargs.get("filter")
@@ -580,7 +580,7 @@ class TestHybridRetriever:
         )
         store = self._make_mock_store(docs=[regular, summary])
         retriever = HybridRetriever(store=store, k=5)
-        with patch("medicare_rag.query.hybrid._bm25_index", new=BM25Index()):
+        with patch("insurance_rag.query.hybrid._bm25_index", new=BM25Index()):
             results = retriever.invoke("cardiac rehab coverage")
         assert any(
             d.metadata.get("doc_type") == "topic_summary" for d in results
@@ -595,21 +595,26 @@ class TestHybridRetriever:
 class TestGetRetrieverIntegration:
 
     def test_get_retriever_returns_hybrid_when_available(self):
-        from medicare_rag.query.retriever import get_retriever
+        from insurance_rag.config import DEFAULT_DOMAIN
+        from insurance_rag.query.retriever import get_retriever
 
-        with patch("medicare_rag.query.hybrid.get_hybrid_retriever") as mock_factory:
+        with patch("insurance_rag.query.hybrid.get_hybrid_retriever") as mock_factory:
             mock_factory.return_value = MagicMock()
             retriever = get_retriever(k=10, metadata_filter={"source": "iom"})
 
         assert retriever is mock_factory.return_value
         mock_factory.assert_called_once_with(
-            k=10, metadata_filter={"source": "iom"}, embeddings=None, store=None
+            k=10,
+            metadata_filter={"source": "iom"},
+            embeddings=None,
+            store=None,
+            domain_name=DEFAULT_DOMAIN,
         )
 
     def test_get_hybrid_retriever_raises_when_bm25_unavailable(self):
         """When rank-bm25 is missing, get_hybrid_retriever raises so get_retriever can fall back."""
-        from medicare_rag.query.hybrid import get_hybrid_retriever
+        from insurance_rag.query.hybrid import get_hybrid_retriever
 
-        with patch("medicare_rag.query.hybrid._HAS_BM25", False):
+        with patch("insurance_rag.query.hybrid._HAS_BM25", False):
             with pytest.raises(ImportError, match="rank-bm25 is required for hybrid retrieval"):
                 get_hybrid_retriever(k=5)

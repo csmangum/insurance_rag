@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""CLI entry point for extraction and chunking (Phase 2). Optionally embed+store in Phase 3."""
+"""CLI entry point for extraction, chunking, and indexing.
+
+Supports domain selection via ``--domain``.  Each domain provides
+extractors and an optional enricher.
+"""
 import argparse
 import logging
 import sys
-from typing import get_args
 
-from medicare_rag.config import PROCESSED_DIR, RAW_DIR
-from medicare_rag.ingest import SourceKind
-from medicare_rag.ingest.chunk import chunk_documents
-from medicare_rag.ingest.extract import extract_all
+from insurance_rag.config import domain_processed_dir, domain_raw_dir
+from insurance_rag.domains import get_domain, list_domains
+from insurance_rag.ingest.chunk import chunk_documents
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,19 +21,25 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> int:
+    available = list_domains()
     parser = argparse.ArgumentParser(
-        description="Extract and chunk Medicare RAG data (Phase 2)."
+        description="Extract, chunk, and index insurance data."
+    )
+    parser.add_argument(
+        "--domain",
+        choices=available + ["all"],
+        default="medicare",
+        help=f"Domain to ingest (default: medicare). Available: {', '.join(available)}",
     )
     parser.add_argument(
         "--source",
-        choices=get_args(SourceKind),
         default="all",
-        help="Source to process: iom, mcd, codes, or all (default: all)",
+        help="Source kind within the domain (default: all)",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Re-extract even if output .txt + .meta.json exist",
+        help="Re-extract even if output files exist",
     )
     parser.add_argument(
         "--skip-extract",
@@ -50,31 +58,75 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    processed_dir = PROCESSED_DIR
-    raw_dir = RAW_DIR
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    domains_to_run = available if args.domain == "all" else [args.domain]
 
     try:
-        if not args.skip_extract:
-            written = extract_all(processed_dir, raw_dir, source=args.source, force=args.force)
-            logger.info("Extraction: %d documents available", len(written))
-        else:
-            logger.info("Skipping extraction (--skip-extract)")
+        for domain_name in domains_to_run:
+            domain = get_domain(domain_name)
+            raw_dir = domain_raw_dir(domain_name)
+            processed_dir = domain_processed_dir(domain_name)
+            processed_dir.mkdir(parents=True, exist_ok=True)
 
-        docs = chunk_documents(
-            processed_dir,
-            source=args.source,
-            enable_summaries=not args.no_summaries,
-        )
-        logger.info("Chunking: %d chunks produced", len(docs))
-        print(f"Documents (chunks): {len(docs)}")
+            extractors = domain.get_extractors()
+            if args.source == "all":
+                sources = list(extractors.keys())
+            elif args.source in extractors:
+                sources = [args.source]
+            else:
+                logger.error(
+                    "Unknown source %r for domain %s. Available: %s",
+                    args.source,
+                    domain_name,
+                    ", ".join(extractors.keys()),
+                )
+                return 1
 
-        if not args.skip_index:
-            from medicare_rag.index import get_embeddings, get_or_create_chroma, upsert_documents
-            embeddings = get_embeddings()
-            store = get_or_create_chroma(embeddings)
-            n_upserted, n_skipped = upsert_documents(store, docs, embeddings)
-            logger.info("Indexed %d new/updated, %d unchanged", n_upserted, n_skipped)
+            if not args.skip_extract:
+                total_written = 0
+                for source in sources:
+                    logger.info(
+                        "[%s] Extracting %s...", domain.display_name, source
+                    )
+                    written = extractors[source](
+                        processed_dir, raw_dir, force=args.force
+                    )
+                    total_written += len(written)
+                logger.info(
+                    "[%s] Extraction: %d documents",
+                    domain.display_name,
+                    total_written,
+                )
+            else:
+                logger.info("[%s] Skipping extraction (--skip-extract)", domain.display_name)
+
+            docs = chunk_documents(
+                processed_dir,
+                source=args.source if args.source != "all" else "all",
+                domain=domain,
+                domain_name=domain_name,
+                enable_summaries=not args.no_summaries,
+            )
+            logger.info("[%s] Chunking: %d chunks", domain.display_name, len(docs))
+
+            if not args.skip_index:
+                from insurance_rag.index import (
+                    get_embeddings,
+                    get_or_create_chroma,
+                    upsert_documents,
+                )
+
+                embeddings = get_embeddings()
+                store = get_or_create_chroma(
+                    embeddings, collection_name=domain.collection_name
+                )
+                n_upserted, n_skipped = upsert_documents(store, docs, embeddings)
+                logger.info(
+                    "[%s] Indexed %d new/updated, %d unchanged",
+                    domain.display_name,
+                    n_upserted,
+                    n_skipped,
+                )
+
     except Exception as e:
         logger.exception("Ingest failed: %s", e)
         return 1

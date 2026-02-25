@@ -9,8 +9,8 @@ from tempfile import NamedTemporaryFile
 
 import httpx
 
-from medicare_rag.download._manifest import file_sha256, write_manifest
-from medicare_rag.download._utils import DOWNLOAD_TIMEOUT
+from insurance_rag.download._manifest import file_sha256, write_manifest
+from insurance_rag.download._utils import DOWNLOAD_TIMEOUT
 
 logger = logging.getLogger(__name__)
 

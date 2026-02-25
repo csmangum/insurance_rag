@@ -5,13 +5,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 
-from medicare_rag.index import get_embeddings, get_or_create_chroma
-from medicare_rag.index.store import upsert_documents
-from medicare_rag.query.retriever import (
+from insurance_rag.index import get_embeddings, get_or_create_chroma
+from insurance_rag.index.store import upsert_documents
+from insurance_rag.query.retriever import (
     LCDAwareRetriever,
     _deduplicate_docs,
+    _resolve_domain_name,
     _strip_to_medical_concept,
     expand_lcd_query,
+    get_retriever,
     is_lcd_query,
 )
 
@@ -29,13 +31,10 @@ def chroma_dir(tmp_path: Path) -> Path:
 
 @pytest.mark.skipif(not _chroma_available, reason="ChromaDB not available")
 def test_get_retriever_returns_k_docs_with_metadata(chroma_dir: Path) -> None:
-    with patch("medicare_rag.config.CHROMA_DIR", chroma_dir), patch(
-        "medicare_rag.config.COLLECTION_NAME", "test_medicare_rag_query"
-    ), patch("medicare_rag.index.store.CHROMA_DIR", chroma_dir), patch(
-        "medicare_rag.index.store.COLLECTION_NAME", "test_medicare_rag_query"
-    ):
+    with patch("insurance_rag.config.CHROMA_DIR", chroma_dir), \
+         patch("insurance_rag.index.store.CHROMA_DIR", chroma_dir):
         embeddings = get_embeddings()
-        store = get_or_create_chroma(embeddings)
+        store = get_or_create_chroma(embeddings, collection_name="test_insurance_rag_query")
         docs = [
             Document(
                 page_content="Medicare Part B covers outpatient care.",
@@ -48,9 +47,9 @@ def test_get_retriever_returns_k_docs_with_metadata(chroma_dir: Path) -> None:
         ]
         upsert_documents(store, docs, embeddings)
 
-        from medicare_rag.query.retriever import get_retriever
+        from insurance_rag.query.retriever import get_retriever
 
-        retriever = get_retriever(k=2)
+        retriever = get_retriever(k=2, embeddings=embeddings, store=store)
         results = retriever.invoke("cardiac rehab")
         assert len(results) == 2
         for d in results:
@@ -58,15 +57,30 @@ def test_get_retriever_returns_k_docs_with_metadata(chroma_dir: Path) -> None:
             assert "doc_id" in d.metadata
 
 
+def test_resolve_domain_name_invalid_falls_back_to_default() -> None:
+    """Invalid domain_name falls back to DEFAULT_DOMAIN without raising."""
+    resolved = _resolve_domain_name("nonexistent_domain")
+    from insurance_rag.config import DEFAULT_DOMAIN
+
+    assert resolved == DEFAULT_DOMAIN
+
+
+def test_get_retriever_invalid_domain_does_not_crash() -> None:
+    """get_retriever with invalid domain_name does not raise KeyError."""
+    mock_store = MagicMock()
+    mock_store.similarity_search.return_value = []
+    retriever = get_retriever(
+        k=2, domain_name="invalid_domain_xyz", embeddings=MagicMock(), store=mock_store
+    )
+    assert retriever is not None
+
+
 @pytest.mark.skipif(not _chroma_available, reason="ChromaDB not available")
 def test_get_retriever_metadata_filter(chroma_dir: Path) -> None:
-    with patch("medicare_rag.config.CHROMA_DIR", chroma_dir), patch(
-        "medicare_rag.config.COLLECTION_NAME", "test_medicare_rag_filter"
-    ), patch("medicare_rag.index.store.CHROMA_DIR", chroma_dir), patch(
-        "medicare_rag.index.store.COLLECTION_NAME", "test_medicare_rag_filter"
-    ):
+    with patch("insurance_rag.config.CHROMA_DIR", chroma_dir), \
+         patch("insurance_rag.index.store.CHROMA_DIR", chroma_dir):
         embeddings = get_embeddings()
-        store = get_or_create_chroma(embeddings)
+        store = get_or_create_chroma(embeddings, collection_name="test_insurance_rag_filter")
         docs = [
             Document(
                 page_content="IOM chapter content.",
@@ -79,7 +93,7 @@ def test_get_retriever_metadata_filter(chroma_dir: Path) -> None:
         ]
         upsert_documents(store, docs, embeddings)
 
-        from medicare_rag.query.retriever import get_retriever
+        from insurance_rag.query.retriever import get_retriever
 
         retriever = get_retriever(k=2, metadata_filter={"source": "iom"})
         results = retriever.invoke("chapter")
@@ -89,7 +103,7 @@ def test_get_retriever_metadata_filter(chroma_dir: Path) -> None:
 
 
 def test_build_rag_chain_returns_callable() -> None:
-    from medicare_rag.query.chain import build_rag_chain
+    from insurance_rag.query.chain import build_rag_chain
 
     mock_retriever = MagicMock()
     mock_retriever.invoke.return_value = [
@@ -98,9 +112,9 @@ def test_build_rag_chain_returns_callable() -> None:
     class FakeResponse:
         content = "Test answer from LLM."
 
-    with patch("medicare_rag.query.chain._create_llm", return_value=MagicMock()), patch(
-        "medicare_rag.query.chain.get_retriever", return_value=mock_retriever
-    ), patch("medicare_rag.query.chain._invoke_chain", return_value=FakeResponse()):
+    with patch("insurance_rag.query.chain._create_llm", return_value=MagicMock()), patch(
+        "insurance_rag.query.chain.get_retriever", return_value=mock_retriever
+    ), patch("insurance_rag.query.chain._invoke_chain", return_value=FakeResponse()):
         invoke = build_rag_chain(retriever=mock_retriever)
         result = invoke({"question": "What is coverage?"})
 
@@ -111,7 +125,7 @@ def test_build_rag_chain_returns_callable() -> None:
 
 
 def test_run_rag_returns_answer_and_source_docs() -> None:
-    from medicare_rag.query.chain import run_rag
+    from insurance_rag.query.chain import run_rag
 
     mock_retriever = MagicMock()
     mock_retriever.invoke.return_value = [
@@ -120,9 +134,9 @@ def test_run_rag_returns_answer_and_source_docs() -> None:
     class FakeResponse:
         content = "Cited answer."
 
-    with patch("medicare_rag.query.chain._create_llm", return_value=MagicMock()), patch(
-        "medicare_rag.query.chain.get_retriever", return_value=mock_retriever
-    ), patch("medicare_rag.query.chain._invoke_chain", return_value=FakeResponse()):
+    with patch("insurance_rag.query.chain._create_llm", return_value=MagicMock()), patch(
+        "insurance_rag.query.chain.get_retriever", return_value=mock_retriever
+    ), patch("insurance_rag.query.chain._invoke_chain", return_value=FakeResponse()):
         answer, source_docs = run_rag("What does the policy say?", retriever=mock_retriever)
 
     assert answer == "Cited answer."
@@ -397,6 +411,16 @@ class TestLCDAwareRetriever:
         store.similarity_search.assert_called_once_with(
             "LCD cardiac rehab coverage", k=5, filter={"source": "iom"}
         )
+
+    def test_lcd_query_with_invalid_domain_does_not_crash(self):
+        """LCDAwareRetriever with invalid domain_name falls back gracefully."""
+        store = self._make_mock_store()
+        retriever = LCDAwareRetriever(
+            store=store, k=5, lcd_k=12, domain_name="invalid_domain_xyz"
+        )
+        # Should not raise; invalid domain falls back to DEFAULT_DOMAIN
+        results = retriever.invoke("LCD cardiac rehab")
+        assert len(results) >= 0
 
 
 def test_run_eval_returns_metrics_for_one_question(tmp_path: Path) -> None:

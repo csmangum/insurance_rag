@@ -16,9 +16,9 @@ from xml.etree.ElementTree import Element
 import pdfplumber
 from bs4 import BeautifulSoup
 
-from medicare_rag.config import CSV_FIELD_SIZE_LIMIT
-from medicare_rag.ingest import SourceKind
-from medicare_rag.ingest.enrich import enrich_hcpcs_text, enrich_icd10_text
+from insurance_rag.config import CSV_FIELD_SIZE_LIMIT
+from insurance_rag.ingest import SourceKind
+from insurance_rag.ingest.enrich import enrich_hcpcs_text, enrich_icd10_text
 
 try:
     import defusedxml.ElementTree as SafeET

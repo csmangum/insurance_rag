@@ -1,7 +1,7 @@
 """Local sentence-transformers embeddings (Phase 3)."""
 from langchain_core.embeddings import Embeddings
 
-from medicare_rag.config import EMBEDDING_MODEL
+from insurance_rag.config import EMBEDDING_MODEL
 
 
 def get_embeddings() -> Embeddings:

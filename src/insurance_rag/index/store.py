@@ -12,10 +12,10 @@ from langchain_core.embeddings import Embeddings
 if TYPE_CHECKING:
     from langchain_chroma import Chroma
 
-from medicare_rag.config import (
+from insurance_rag.config import (
     CHROMA_DIR,
     CHROMA_UPSERT_BATCH_SIZE,
-    COLLECTION_NAME,
+    DEFAULT_DOMAIN,
     GET_META_BATCH_SIZE,
 )
 
@@ -62,13 +62,23 @@ def _content_hash(doc: Document) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def get_or_create_chroma(embeddings: Embeddings) -> "Chroma":
-    """Return a LangChain Chroma instance (persist_directory, collection_name, embedding_function)."""
+def get_or_create_chroma(
+    embeddings: Embeddings, collection_name: str | None = None
+) -> "Chroma":
+    """Return a LangChain Chroma instance.
+
+    *collection_name* defaults to the default domain's collection.
+    """
     from langchain_chroma import Chroma
+
+    if collection_name is None:
+        from insurance_rag.domains import get_domain
+
+        collection_name = get_domain(DEFAULT_DOMAIN).collection_name
 
     CHROMA_DIR.mkdir(parents=True, exist_ok=True)
     return Chroma(
-        collection_name=COLLECTION_NAME,
+        collection_name=collection_name,
         embedding_function=embeddings,
         persist_directory=str(CHROMA_DIR),
     )

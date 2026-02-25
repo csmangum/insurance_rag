@@ -1,4 +1,4 @@
-"""Centralized configuration for the Medicare RAG pipeline.
+"""Centralized configuration for the Insurance RAG pipeline.
 
 Reads settings from environment variables (via python-dotenv) with sensible
 defaults.  Numeric values use safe parsers that log a warning and fall back
@@ -6,7 +6,8 @@ to the default when the env value is invalid or out of range.
 
 Exports:
     Paths      — DATA_DIR, RAW_DIR, PROCESSED_DIR, CHROMA_DIR
-    Embedding  — EMBEDDING_MODEL, COLLECTION_NAME
+    Domain     — ACTIVE_DOMAINS, domain_data_dir
+    Embedding  — EMBEDDING_MODEL
     LLM        — LOCAL_LLM_MODEL, LOCAL_LLM_DEVICE, LOCAL_LLM_MAX_NEW_TOKENS,
                   LOCAL_LLM_REPETITION_PENALTY
     Chunking   — CHUNK_SIZE, CHUNK_OVERLAP, LCD_CHUNK_SIZE, LCD_CHUNK_OVERLAP
@@ -87,10 +88,33 @@ PROCESSED_DIR = DATA_DIR / "processed"
 
 # Phase 3: local embeddings and vector store
 CHROMA_DIR = DATA_DIR / "chroma"
-COLLECTION_NAME = "medicare_rag"
 EMBEDDING_MODEL = os.environ.get(
     "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 )
+
+# Multi-domain support
+ACTIVE_DOMAINS: list[str] = [
+    d.strip()
+    for d in os.environ.get("ACTIVE_DOMAINS", "medicare").split(",")
+    if d.strip()
+]
+_default_domain_fallback = ACTIVE_DOMAINS[0] if ACTIVE_DOMAINS else "medicare"
+DEFAULT_DOMAIN: str = os.environ.get("DEFAULT_DOMAIN", _default_domain_fallback)
+
+
+def domain_data_dir(domain_name: str) -> Path:
+    """Return ``DATA_DIR / domain_name`` for domain-partitioned raw/processed dirs."""
+    return DATA_DIR / domain_name
+
+
+def domain_raw_dir(domain_name: str) -> Path:
+    """Return ``DATA_DIR / domain_name / raw``."""
+    return domain_data_dir(domain_name) / "raw"
+
+
+def domain_processed_dir(domain_name: str) -> Path:
+    """Return ``DATA_DIR / domain_name / processed``."""
+    return domain_data_dir(domain_name) / "processed"
 
 # Chroma batch sizes (env-overridable; must be >= 1)
 CHROMA_UPSERT_BATCH_SIZE = _safe_positive_int("CHROMA_UPSERT_BATCH_SIZE", 5000)

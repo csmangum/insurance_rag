@@ -31,7 +31,7 @@ Validation runs checks on the Chroma index (structure, metadata, sources, search
 | Check | Passed | Detail |
 |-------|--------|--------|
 | chroma_dir_exists | ✓ | `data/chroma` |
-| collection_accessible | ✓ | `medicare_rag` |
+| collection_accessible | ✓ | `medicare` (default domain) |
 | collection_non_empty | ✓ | 28,470 docs |
 | bulk_metadata_fetch | ✓ | 28,470 docs |
 | metadata_key_doc_id | ✓ | 100% |

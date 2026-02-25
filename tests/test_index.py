@@ -5,14 +5,14 @@ from unittest.mock import patch
 import pytest
 from langchain_core.documents import Document
 
-from medicare_rag.index.embed import get_embeddings
-from medicare_rag.index.store import (
+from insurance_rag.index.embed import get_embeddings
+from insurance_rag.index.store import (
     GET_META_BATCH_SIZE,
     _chunk_id,
     _content_hash,
-    get_raw_collection,
     _sanitize_metadata,
     get_or_create_chroma,
+    get_raw_collection,
     upsert_documents,
 )
 
@@ -34,10 +34,8 @@ def test_get_raw_collection_raises_when_missing() -> None:
 @pytest.mark.skipif(not _chroma_available, reason="ChromaDB not available")
 def test_get_raw_collection_returns_collection_when_present(chroma_dir: Path) -> None:
     """get_raw_collection returns the underlying collection when present."""
-    with patch("medicare_rag.index.store.CHROMA_DIR", chroma_dir), patch(
-        "medicare_rag.index.store.COLLECTION_NAME", "test_medicare_rag"
-    ):
-        store = get_or_create_chroma(get_embeddings())
+    with patch("insurance_rag.index.store.CHROMA_DIR", chroma_dir):
+        store = get_or_create_chroma(get_embeddings(), collection_name="test_insurance_rag")
         coll = get_raw_collection(store)
     assert coll is not None
     assert hasattr(coll, "get")
@@ -108,11 +106,9 @@ def chroma_dir(tmp_path: Path):
 
 @pytest.mark.skipif(not _chroma_available, reason="ChromaDB not available (e.g. pydantic v1 on Python 3.14+)")
 def test_get_or_create_chroma_and_upsert(chroma_dir: Path) -> None:
-    with patch("medicare_rag.index.store.CHROMA_DIR", chroma_dir), patch(
-        "medicare_rag.index.store.COLLECTION_NAME", "test_medicare_rag"
-    ):
+    with patch("insurance_rag.index.store.CHROMA_DIR", chroma_dir):
         embeddings = get_embeddings()
-        store = get_or_create_chroma(embeddings)
+        store = get_or_create_chroma(embeddings, collection_name="test_insurance_rag")
         docs = [
             Document(
                 page_content="Medicare Part B covers outpatient care.",
@@ -127,7 +123,6 @@ def test_get_or_create_chroma_and_upsert(chroma_dir: Path) -> None:
         assert n_upserted == 2
         assert n_skipped == 0
 
-        # Query by similarity
         results = store.similarity_search("cardiac rehab", k=1)
         assert len(results) >= 1
         assert "cardiac" in results[0].page_content or "LCD" in results[0].page_content
@@ -136,11 +131,9 @@ def test_get_or_create_chroma_and_upsert(chroma_dir: Path) -> None:
 
 @pytest.mark.skipif(not _chroma_available, reason="ChromaDB not available (e.g. pydantic v1 on Python 3.14+)")
 def test_upsert_documents_incremental_skips_unchanged(chroma_dir: Path) -> None:
-    with patch("medicare_rag.index.store.CHROMA_DIR", chroma_dir), patch(
-        "medicare_rag.index.store.COLLECTION_NAME", "test_medicare_rag_incr"
-    ):
+    with patch("insurance_rag.index.store.CHROMA_DIR", chroma_dir):
         embeddings = get_embeddings()
-        store = get_or_create_chroma(embeddings)
+        store = get_or_create_chroma(embeddings, collection_name="test_insurance_rag_incr")
         docs = [
             Document(
                 page_content="Content A.",
@@ -163,11 +156,9 @@ def test_upsert_documents_incremental_skips_unchanged(chroma_dir: Path) -> None:
 
 @pytest.mark.skipif(not _chroma_available, reason="ChromaDB not available (e.g. pydantic v1 on Python 3.14+)")
 def test_upsert_documents_incremental_updates_changed(chroma_dir: Path) -> None:
-    with patch("medicare_rag.index.store.CHROMA_DIR", chroma_dir), patch(
-        "medicare_rag.index.store.COLLECTION_NAME", "test_medicare_rag_change"
-    ):
+    with patch("insurance_rag.index.store.CHROMA_DIR", chroma_dir):
         embeddings = get_embeddings()
-        store = get_or_create_chroma(embeddings)
+        store = get_or_create_chroma(embeddings, collection_name="test_insurance_rag_change")
         docs = [
             Document(
                 page_content="Original text.",
