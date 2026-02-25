@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import pdfplumber
@@ -27,7 +28,7 @@ def _extract_html_text(html_path: Path) -> str:
     """Extract main text from an HTML file."""
     raw = html_path.read_text(encoding="utf-8", errors="replace")
     soup = BeautifulSoup(raw, "html.parser")
-    for tag in soup.find_all(["script", "style"]):
+    for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside"]):
         tag.decompose()
     text = soup.get_text(separator="\n", strip=True)
     return "\n".join(line.strip() for line in text.splitlines() if line.strip())
@@ -66,14 +67,14 @@ def _extract_from_dir(
         if suf == ".pdf":
             try:
                 text = _extract_pdf_text(path)
-            except OSError as e:
-                logger.warning("Extract failed for %s: %s", path, e)
+            except Exception as e:
+                logger.warning("Extract failed for %s (%s): %s", path, type(e).__name__, e)
                 continue
         elif suf in (".html", ".htm"):
             try:
                 text = _extract_html_text(path)
-            except OSError as e:
-                logger.warning("Extract failed for %s: %s", path, e)
+            except (OSError, UnicodeError) as e:
+                logger.warning("Extract failed for %s (%s): %s", path, type(e).__name__, e)
                 continue
         else:
             continue
@@ -82,7 +83,8 @@ def _extract_from_dir(
             continue
         doc_id = path.stem
         if not doc_id.replace("-", "").replace("_", "").isalnum():
-            doc_id = path.name.replace(path.suffix, "").replace(" ", "_")
+            doc_id = re.sub(r"[^a-zA-Z0-9_-]", "_", path.stem)
+            doc_id = re.sub(r"_+", "_", doc_id).strip("_") or "doc"
         out_txt = processed_dir / processed_subdir / f"{doc_id}.txt"
         out_meta = processed_dir / processed_subdir / f"{doc_id}.meta.json"
         if not force and out_txt.exists() and out_meta.exists():
@@ -125,6 +127,7 @@ def extract_forms(
     written: list[tuple[Path, Path]] = []
     for subdir in sorted(forms_raw.iterdir()):
         if not subdir.is_dir():
+            logger.debug("Skipping non-directory entry in forms directory: %s", subdir)
             continue
         written.extend(
             _extract_from_dir(
