@@ -24,6 +24,8 @@ Usage:
   python scripts/validate_and_eval.py --eval-only --k-values 1,3,5,10  # multi-k sweep
   python scripts/validate_and_eval.py --eval-only --baseline scripts/eval_baseline.json   # regression gate
   python scripts/validate_and_eval.py --eval-only --save-baseline scripts/eval_baseline.json   # update baseline
+  python scripts/validate_and_eval.py --domain medicare   # validate/eval medicare collection (default)
+  python scripts/validate_and_eval.py --domain auto --eval-only   # eval auto domain only
 """
 import argparse
 import json
@@ -52,10 +54,14 @@ EXPECTED_SOURCES = ("iom", "mcd", "codes")
 # Index loading helpers
 # ---------------------------------------------------------------------------
 
-def _load_store():
+def _load_store(domain_name: str | None = None):
+    from insurance_rag.config import DEFAULT_DOMAIN
+    from insurance_rag.domains import get_domain
     from insurance_rag.index import get_embeddings, get_or_create_chroma
+    name = domain_name or DEFAULT_DOMAIN
     embeddings = get_embeddings()
-    store = get_or_create_chroma(embeddings)
+    collection_name = get_domain(name).collection_name
+    store = get_or_create_chroma(embeddings, collection_name=collection_name)
     return store, embeddings
 
 
@@ -68,13 +74,14 @@ def _load_retriever(k: int, metadata_filter: dict | None = None):
 # Validation
 # ---------------------------------------------------------------------------
 
-def validate_index(store) -> dict:
+def validate_index(store, domain_name: str | None = None) -> dict:
     """Run comprehensive index validation. Returns a dict of results with 'passed' bool."""
     from insurance_rag.config import _REPO_ROOT, CHROMA_DIR, DEFAULT_DOMAIN
+    from insurance_rag.domains import get_domain
 
+    name = domain_name or DEFAULT_DOMAIN
     try:
-        from insurance_rag.domains import get_domain
-        COLLECTION_NAME = get_domain(DEFAULT_DOMAIN).collection_name
+        COLLECTION_NAME = get_domain(name).collection_name
     except (KeyError, ImportError):
         COLLECTION_NAME = "medicare"
 
@@ -1096,7 +1103,14 @@ def _format_validation_report(validation: dict) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Comprehensive Medicare RAG index validation and retrieval evaluation."
+        description="Comprehensive Insurance RAG index validation and retrieval evaluation."
+    )
+    parser.add_argument(
+        "--domain",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Domain to validate/evaluate (e.g. medicare, auto). Default: config DEFAULT_DOMAIN.",
     )
     parser.add_argument(
         "--validate-only",
@@ -1170,6 +1184,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Resolve and set active domain so retriever/expand/chain use it
+    import insurance_rag.config as _config
+    from insurance_rag.domains import get_domain, list_domains
+
+    domain = args.domain if args.domain is not None else _config.DEFAULT_DOMAIN
+    if domain not in list_domains():
+        logger.error("Unknown domain %r. Available: %s", domain, ", ".join(list_domains()))
+        return 1
+    _config.DEFAULT_DOMAIN = domain
+    logger.info("Using domain: %s (collection: %s)", domain, get_domain(domain).collection_name)
+
     if args.json:
         logging.getLogger().setLevel(logging.WARNING)
 
@@ -1189,14 +1214,14 @@ def main() -> int:
     # ---- Validation ----
     if do_validate:
         try:
-            store, _ = _load_store()
+            store, _ = _load_store(domain)
         except Exception as e:
             logger.exception("Failed to load store: %s", e)
             return 1
         logger.info("=" * 60)
-        logger.info("=== INDEX VALIDATION ===")
+        logger.info("=== INDEX VALIDATION (%s) ===", domain)
         logger.info("=" * 60)
-        validation = validate_index(store)
+        validation = validate_index(store, domain)
         all_output["validation"] = validation
 
         if not args.json:
