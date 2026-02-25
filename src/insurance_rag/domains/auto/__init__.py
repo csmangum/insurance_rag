@@ -77,6 +77,7 @@ class AutoInsuranceDomain(InsuranceDomain):
             "specialized_topic_patterns": COVERAGE_TOPIC_PATTERNS,
             "strip_noise_pattern": STRIP_COVERAGE_NOISE,
             "strip_filler_pattern": STRIP_FILLER,
+            "default_expansion": "auto insurance coverage policy state requirements",
         }
 
     def get_source_patterns(self) -> dict[str, list[Any]]:

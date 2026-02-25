@@ -45,7 +45,7 @@ class InsuranceDomain(ABC):
 
     @abstractmethod
     def get_extractors(self) -> dict[str, Any]:
-        """Map of source-kind -> extract callable(raw_dir, processed_dir, *, force)."""
+        """Map of source-kind -> extract callable(processed_dir, raw_dir, *, force)."""
 
     def get_enricher(self) -> Any | None:
         """Optional enrichment callable applied during extraction."""
@@ -71,6 +71,10 @@ class InsuranceDomain(ABC):
             ``"specialized_query_patterns"`` — list of compiled regexes
             ``"specialized_topic_patterns"`` — list of (regex, expansion) tuples
             ``"strip_noise_pattern"`` — compiled regex for stripping domain jargon
+            ``"default_expansion"`` — fallback expansion string when no topic pattern matches
+
+        If a key is missing from the returned dict, that pattern type is not applied.
+        Implementations may return an empty dict if no custom patterns are needed.
         """
 
     @abstractmethod

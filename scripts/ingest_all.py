@@ -90,7 +90,7 @@ def main() -> int:
                     written = extractors[source](
                         processed_dir, raw_dir, force=args.force
                     )
-                    total_written += len(written)
+                    total_written += len(written) if written else 0
                 logger.info(
                     "[%s] Extraction: %d documents",
                     domain.display_name,

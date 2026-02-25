@@ -699,7 +699,7 @@ def test_chunk_documents_iom_not_affected_by_lcd_settings(tmp_path: Path) -> Non
     assert len(docs_small_lcd) == len(docs_large_lcd)
 
 
-def test_ingest_all_skip_extract_exits_zero(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_ingest_all_skip_extract_exits_zero(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """CLI with --skip-extract and pre-populated processed dir exits 0 and reports chunk count."""
     (tmp_path / "iom" / "100-02").mkdir(parents=True)
     (tmp_path / "iom" / "100-02" / "ch1.txt").write_text("Short.")
@@ -707,7 +707,7 @@ def test_ingest_all_skip_extract_exits_zero(tmp_path: Path, capsys: pytest.Captu
         json.dumps({"source": "iom", "manual": "100-02", "chapter": "1", "doc_id": "iom_100-02_ch1"})
     )
     script_path = Path(__file__).resolve().parent.parent / "scripts" / "ingest_all.py"
-    with patch("insurance_rag.config.domain_processed_dir", return_value=tmp_path), \
+    with caplog.at_level("INFO"), patch("insurance_rag.config.domain_processed_dir", return_value=tmp_path), \
          patch("insurance_rag.config.domain_raw_dir", return_value=tmp_path):
         spec = importlib.util.spec_from_file_location("ingest_all", script_path)
         module = importlib.util.module_from_spec(spec)
@@ -716,3 +716,5 @@ def test_ingest_all_skip_extract_exits_zero(tmp_path: Path, capsys: pytest.Captu
         with patch("sys.argv", ["ingest_all.py", "--skip-extract", "--skip-index"]):
             exit_code = module.main()
     assert exit_code == 0
+    log_text = caplog.text
+    assert "Skipping extraction" in log_text or "Chunking" in log_text

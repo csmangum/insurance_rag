@@ -78,6 +78,7 @@ class MedicareDomain(InsuranceDomain):
             "specialized_topic_patterns": LCD_TOPIC_PATTERNS,
             "strip_noise_pattern": STRIP_LCD_NOISE,
             "strip_filler_pattern": STRIP_FILLER,
+            "default_expansion": "Local Coverage Determination LCD policy coverage criteria",
         }
 
     def get_source_patterns(self) -> dict[str, list[Any]]:

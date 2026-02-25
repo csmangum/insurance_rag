@@ -60,7 +60,9 @@ def _get_domain_query_patterns(domain_name: str | None = None) -> dict[str, Any]
 def is_lcd_query(query: str, domain_name: str | None = None) -> bool:
     """Return True if the query matches the domain's specialized query patterns.
 
-    For Medicare, this detects LCD/coverage-determination queries.
+    Legacy name: "LCD" refers to Medicare Local Coverage Determination, but this
+    function is domain-agnostic — it detects any domain-specific specialized
+    queries (e.g. coverage-determination for Medicare, coverage/limits for Auto).
     Kept as ``is_lcd_query`` for backward compatibility.
     """
     patterns = _get_domain_query_patterns(domain_name).get(
@@ -90,10 +92,10 @@ def expand_lcd_query(query: str, domain_name: str | None = None) -> list[str]:
 
     if topic_expansions:
         queries.append(f"{query} {' '.join(topic_expansions)}")
-    elif resolved_domain == "medicare":
-        queries.append(
-            f"{query} Local Coverage Determination LCD policy coverage criteria"
-        )
+    else:
+        default_exp = domain_patterns.get("default_expansion")
+        if default_exp:
+            queries.append(f"{query} {default_exp}")
 
     concept = _strip_to_concept(query, strip_noise, strip_filler)
     if concept and concept.lower() != query.lower():
@@ -268,8 +270,10 @@ class LCDAwareRetriever(BaseRetriever):
     and source-filtered search.
 
     For non-specialized queries, delegates to standard similarity search.
-    For specialized queries (e.g. LCD in Medicare), runs multi-variant
-    source-filtered searches and merges results.
+    For specialized queries (e.g. LCD in Medicare, coverage in Auto), runs
+    multi-variant source-filtered searches and merges results.
+
+    Alias: :class:`DomainAwareRetriever` for domain-agnostic usage.
     """
 
     model_config = {"arbitrary_types_allowed": True}
@@ -287,7 +291,7 @@ class LCDAwareRetriever(BaseRetriever):
         run_manager: CallbackManagerForRetrieverRun,
     ) -> list[Document]:
         if is_lcd_query(query, self.domain_name):
-            return self._lcd_retrieve(query)
+            return self._specialized_retrieve(query)
         search_kwargs: dict = {"k": self.k}
         if self.metadata_filter is not None:
             search_kwargs["filter"] = self.metadata_filter
@@ -297,7 +301,7 @@ class LCDAwareRetriever(BaseRetriever):
         )
         return docs
 
-    def _lcd_retrieve(self, query: str) -> list[Document]:
+    def _specialized_retrieve(self, query: str) -> list[Document]:
         spec_filter = None
         resolved = _resolve_domain_name(self.domain_name)
         try:
@@ -350,6 +354,9 @@ class LCDAwareRetriever(BaseRetriever):
             self.store, merged, query, self.lcd_k, domain_name=self.domain_name
         )
         return merged
+
+
+DomainAwareRetriever = LCDAwareRetriever  # Alias for domain-agnostic usage
 
 
 def get_retriever(
