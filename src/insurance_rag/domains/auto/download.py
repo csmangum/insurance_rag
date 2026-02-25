@@ -104,8 +104,6 @@ def _download_url_to_file(
             )
             return False
         raise
-    except Exception:
-        raise
 
 
 def download_regulations(raw_dir: Path, *, force: bool = False) -> None:
@@ -272,6 +270,10 @@ def download_rates(raw_dir: Path, *, force: bool = False) -> None:
         for key, url in RATES_URLS.items():
             name = sanitize_filename_from_url(url, f"{key}.pdf")
             if not name.lower().endswith(".pdf"):
+                # Ensure a .pdf extension while preserving the base name:
+                # - If there is no dot in the name, just append ".pdf".
+                # - If there is a dot, replace only the final extension with ".pdf"
+                #   (e.g., "file.name.txt" -> "file.name.pdf", not "file.pdf").
                 name = name + ".pdf" if "." not in name else name.rsplit(".", 1)[0] + ".pdf"
             dest = out_base / name
             logger.info("Downloading %s -> %s", url, dest)
