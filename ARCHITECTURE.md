@@ -173,7 +173,7 @@ flowchart LR
   Docs["List[Document]\n(chunks)"]
   Embed["embed.py\nHuggingFace Embeddings\n(all-MiniLM-L6-v2, 384-dim)"]
   Store["store.py\ncontent-hash dedup + batch upsert"]
-  Chroma["ChromaDB\ndata/chroma/\ncollection: insurance_rag"]
+  Chroma["ChromaDB\ndata/chroma/\nper-domain collection"]
 
   Docs --> Embed --> Store --> Chroma
 ```
@@ -329,7 +329,8 @@ All configuration is centralized in a single module that loads `.env` via `pytho
 | `RAW_DIR` | `{DATA_DIR}/raw` | — |
 | `PROCESSED_DIR` | `{DATA_DIR}/processed` | — |
 | `CHROMA_DIR` | `{DATA_DIR}/chroma` | — |
-| `COLLECTION_NAME` | `"insurance_rag"` | — |
+| `DEFAULT_DOMAIN` | first of `ACTIVE_DOMAINS` (e.g. `"medicare"`) | `DEFAULT_DOMAIN` |
+| (per-domain collection) | e.g. `"medicare"`, `"auto_insurance"` | from `get_domain(name).collection_name` |
 | `EMBEDDING_MODEL` | `"sentence-transformers/all-MiniLM-L6-v2"` | `EMBEDDING_MODEL` |
 | `LOCAL_LLM_MODEL` | `"TinyLlama/TinyLlama-1.1B-Chat-v1.0"` | `LOCAL_LLM_MODEL` |
 | `LOCAL_LLM_DEVICE` | `"auto"` | `LOCAL_LLM_DEVICE` |

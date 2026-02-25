@@ -122,11 +122,13 @@ def main() -> int:
         logger.warning("Eval file is empty")
         return 0
 
-    from insurance_rag.config import CHROMA_DIR, COLLECTION_NAME, DATA_DIR
+    from insurance_rag.config import CHROMA_DIR, DATA_DIR, DEFAULT_DOMAIN
+    from insurance_rag.domains import get_domain
     from insurance_rag.index import get_embeddings, get_or_create_chroma
     from insurance_rag.query.retriever import get_retriever
 
     out_path = args.out if args.out is not None else DATA_DIR / "rag_eval_report.md"
+    collection_name = get_domain(DEFAULT_DOMAIN).collection_name
 
     if not CHROMA_DIR.exists():
         logger.error("Chroma index not found at %s. Run ingestion first.", CHROMA_DIR)
@@ -136,7 +138,7 @@ def main() -> int:
         embeddings = get_embeddings()
         store = get_or_create_chroma(embeddings)
         if store._collection.count() == 0:
-            logger.error("Collection %s is empty. Run ingestion first.", COLLECTION_NAME)
+            logger.error("Collection %s is empty. Run ingestion first.", collection_name)
             return 1
         retriever = get_retriever(k=args.k)
     except Exception as e:

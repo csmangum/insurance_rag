@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprehensive search validation and retrieval evaluation for the Medicare RAG index.
+"""Comprehensive search validation and retrieval evaluation for the Insurance RAG index.
 
 Validates the Chroma index thoroughly (structure, metadata, distributions, embeddings)
 and runs a rich retrieval evaluation with multiple metrics across categories, difficulty
