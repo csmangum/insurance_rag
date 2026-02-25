@@ -102,6 +102,8 @@ def main() -> int:
             docs = chunk_documents(
                 processed_dir,
                 source=args.source if args.source != "all" else "all",
+                domain=domain,
+                domain_name=domain_name,
                 enable_summaries=not args.no_summaries,
             )
             logger.info("[%s] Chunking: %d chunks", domain.display_name, len(docs))

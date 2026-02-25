@@ -65,9 +65,22 @@ def _load_store(domain_name: str | None = None):
     return store, embeddings
 
 
-def _load_retriever(k: int, metadata_filter: dict | None = None):
+def _load_retriever(
+    k: int,
+    metadata_filter: dict | None = None,
+    domain_name: str | None = None,
+    store=None,
+    embeddings=None,
+):
     from insurance_rag.query.retriever import get_retriever
-    return get_retriever(k=k, metadata_filter=metadata_filter)
+
+    return get_retriever(
+        k=k,
+        metadata_filter=metadata_filter,
+        domain_name=domain_name,
+        store=store,
+        embeddings=embeddings,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +565,7 @@ def run_eval(
     k: int = 5,
     metadata_filter: dict | None = None,
     k_values: list[int] | None = None,
+    domain_name: str | None = None,
 ) -> dict:
     """Run the full evaluation suite. Returns comprehensive metrics dict."""
     if not eval_path.exists():
@@ -579,7 +593,14 @@ def run_eval(
     if k_values is None:
         k_values = [k]
 
-    retriever = _load_retriever(k=max(max(k_values), k), metadata_filter=metadata_filter)
+    store, embeddings = _load_store(domain_name)
+    retriever = _load_retriever(
+        k=max(max(k_values), k),
+        metadata_filter=metadata_filter,
+        domain_name=domain_name,
+        store=store,
+        embeddings=embeddings,
+    )
 
     # Warmup: run one retrieval to amortise cold-start costs (model loading,
     # Chroma cache priming) so that latency stats reflect steady-state performance.
@@ -1286,6 +1307,7 @@ def main() -> int:
                 k=args.k,
                 metadata_filter=metadata_filter,
                 k_values=k_values,
+                domain_name=domain,
             )
             all_output["evaluation"] = metrics
 

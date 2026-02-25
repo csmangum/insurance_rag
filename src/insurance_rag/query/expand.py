@@ -12,16 +12,19 @@ import re
 from typing import Any
 
 
-def _get_domain_patterns() -> (
+def _get_domain_patterns(domain_name: str | None = None) -> (
     tuple[dict[str, list[Any]], dict[str, str], list[tuple[Any, str]], dict[str, float]]
 ):
     """Load source patterns, expansions, synonym map, and default relevance
-    from the active domain."""
-    try:
+    from the given domain (or default)."""
+    if domain_name is None:
         from insurance_rag.config import DEFAULT_DOMAIN
+
+        domain_name = DEFAULT_DOMAIN
+    try:
         from insurance_rag.domains import get_domain
 
-        domain = get_domain(DEFAULT_DOMAIN)
+        domain = get_domain(domain_name)
         return (
             domain.get_source_patterns(),
             domain.get_source_expansions(),
@@ -36,6 +39,7 @@ def detect_source_relevance(
     query: str,
     source_patterns: dict[str, list[re.Pattern[str]]] | None = None,
     default_relevance: dict[str, float] | None = None,
+    domain_name: str | None = None,
 ) -> dict[str, float]:
     """Score each source type's relevance to the query on a 0.0-1.0 scale.
 
@@ -43,7 +47,7 @@ def detect_source_relevance(
     for all sources so cross-source retrieval still casts a wide net.
     """
     if source_patterns is None or default_relevance is None:
-        _sp, _se, _sm, _dr = _get_domain_patterns()
+        _sp, _se, _sm, _dr = _get_domain_patterns(domain_name)
         if source_patterns is None:
             source_patterns = _sp
         if default_relevance is None:
@@ -63,10 +67,11 @@ def detect_source_relevance(
 def _apply_synonyms(
     query: str,
     synonym_map: list[tuple[re.Pattern[str], str]] | None = None,
+    domain_name: str | None = None,
 ) -> str:
     """Expand a query with domain synonyms."""
     if synonym_map is None:
-        _, _, synonym_map, _ = _get_domain_patterns()
+        _, _, synonym_map, _ = _get_domain_patterns(domain_name)
 
     additions: list[str] = []
     for pattern, expansion in synonym_map:
@@ -83,6 +88,7 @@ def expand_cross_source_query(
     source_expansions: dict[str, str] | None = None,
     synonym_map: list[tuple[re.Pattern[str], str]] | None = None,
     default_relevance: dict[str, float] | None = None,
+    domain_name: str | None = None,
 ) -> list[str]:
     """Expand a query into multiple variants optimized for different sources.
 
@@ -91,7 +97,7 @@ def expand_cross_source_query(
     optionally a synonym-expanded variant.
     """
     if source_patterns is None or source_expansions is None or synonym_map is None:
-        _sp, _se, _sm, _dr = _get_domain_patterns()
+        _sp, _se, _sm, _dr = _get_domain_patterns(domain_name)
         if source_patterns is None:
             source_patterns = _sp
         if source_expansions is None:
@@ -102,14 +108,16 @@ def expand_cross_source_query(
             default_relevance = _dr
 
     variants = [query]
-    relevance = detect_source_relevance(query, source_patterns, default_relevance)
+    relevance = detect_source_relevance(
+        query, source_patterns, default_relevance, domain_name
+    )
 
     for source, score in relevance.items():
         if score > 0 and source in source_expansions:
             expansion = source_expansions[source]
             variants.append(f"{query} {expansion}")
 
-    synonym_expanded = _apply_synonyms(query, synonym_map)
+    synonym_expanded = _apply_synonyms(query, synonym_map, domain_name)
     if synonym_expanded != query:
         variants.append(synonym_expanded)
 

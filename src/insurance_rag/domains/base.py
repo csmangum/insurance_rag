@@ -116,3 +116,11 @@ class InsuranceDomain(ABC):
     def get_quick_questions(self) -> list[str]:
         """Example questions for the Streamlit UI."""
         return []
+
+    def get_specialized_source_filter(self) -> dict[str, str] | None:
+        """Filter for source-focused search when specialized query detected.
+
+        E.g. Medicare returns ``{"source": "mcd"}`` for LCD queries.
+        Return None to skip extra source-filtered search.
+        """
+        return None

@@ -86,6 +86,8 @@ def build_rag_chain(
     metadata_filter: dict | None = None,
     system_prompt: str | None = None,
     domain_name: str | None = None,
+    store: Any = None,
+    embeddings: Any = None,
 ) -> Callable[[dict], dict]:
     """Build an LCEL RAG chain.
 
@@ -93,10 +95,18 @@ def build_rag_chain(
     ``{"answer": str, "source_documents": list[Document]}``.
 
     *system_prompt* overrides the domain's prompt when provided.
-    *domain_name* selects which domain's prompt to use (default domain otherwise).
+    *domain_name* selects which domain's prompt and retriever to use.
+    *store* and *embeddings* are passed to get_retriever when building
+    a new retriever (for domain-specific collection).
     """
     if retriever is None:
-        retriever = get_retriever(k=k, metadata_filter=metadata_filter)
+        retriever = get_retriever(
+            k=k,
+            metadata_filter=metadata_filter,
+            store=store,
+            embeddings=embeddings,
+            domain_name=domain_name,
+        )
     if system_prompt is None:
         system_prompt = _resolve_system_prompt(domain_name)
     llm = _create_llm()
@@ -126,12 +136,18 @@ def run_rag(
     retriever: Any = None,
     k: int = 8,
     metadata_filter: dict | None = None,
+    domain_name: str | None = None,
+    store: Any = None,
+    embeddings: Any = None,
 ) -> tuple[str, list[Document]]:
     """Run the RAG chain for one question. Returns (answer, source_documents)."""
     invoke = build_rag_chain(
         retriever=retriever,
         k=k,
         metadata_filter=metadata_filter,
+        domain_name=domain_name,
+        store=store,
+        embeddings=embeddings,
     )
     result = invoke({"question": question})
     return result["answer"], result["source_documents"]

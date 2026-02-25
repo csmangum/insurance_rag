@@ -8,6 +8,7 @@ fragmented content to improve retrieval consistency across rephrasings.
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -25,19 +26,23 @@ from insurance_rag.config import (
 )
 from insurance_rag.ingest import SourceKind
 
+if TYPE_CHECKING:
+    from insurance_rag.domains.base import InsuranceDomain
+
 logger = logging.getLogger(__name__)
 
 
 def _load_extracted_docs(
     processed_dir: Path,
     source: SourceKind,
+    domain: "InsuranceDomain | None" = None,
 ) -> list[tuple[str, dict]]:
     """Scan processed_dir for .txt + .meta.json pairs; return (content, metadata) list."""
     processed_dir = Path(processed_dir)
     out: list[tuple[str, dict]] = []
-    subdirs = []
+    subdirs: list[str]
     if source == "all":
-        subdirs = ["iom", "mcd", "codes"]
+        subdirs = list(domain.source_kinds) if domain else ["iom", "mcd", "codes"]
     else:
         subdirs = [source]
     for sub in subdirs:
@@ -70,18 +75,33 @@ def _is_code_doc(meta: dict) -> bool:
 
 
 def _is_mcd_doc(meta: dict) -> bool:
+    """Backward-compatible: True if source is mcd (Medicare LCD docs)."""
     return meta.get("source") == "mcd"
+
+
+def _uses_large_chunk_splitter(
+    meta: dict, domain: "InsuranceDomain | None"
+) -> bool:
+    """True if this doc's source has chunk size overrides (e.g. mcd, regulations)."""
+    if domain is None:
+        return meta.get("source") == "mcd"
+    overrides = domain.get_chunk_overrides()
+    if not overrides:
+        return False
+    return meta.get("source") in overrides
 
 
 def chunk_documents(
     processed_dir: Path,
     *,
     source: SourceKind = "all",
+    domain: "InsuranceDomain | None" = None,
     chunk_size: int = CHUNK_SIZE,
     chunk_overlap: int = CHUNK_OVERLAP,
     lcd_chunk_size: int = LCD_CHUNK_SIZE,
     lcd_chunk_overlap: int = LCD_CHUNK_OVERLAP,
     enable_summaries: bool = ENABLE_TOPIC_SUMMARIES,
+    domain_name: str | None = None,
 ) -> list[Document]:
     """Load extracted docs from processed_dir and return chunked LangChain Documents.
 
@@ -93,9 +113,14 @@ def chunk_documents(
     When *enable_summaries* is True, document-level and topic-cluster
     summary documents are appended.  These act as stable "anchor" chunks
     that improve retrieval consistency for fragmented topics.
+
+    When *domain* is provided, uses domain.source_kinds for subdirs and
+    domain.get_chunk_overrides() for source-specific chunk sizing.
     """
     processed_dir = Path(processed_dir)
-    pairs = _load_extracted_docs(processed_dir, source)
+    pairs = _load_extracted_docs(processed_dir, source, domain)
+    overrides = domain.get_chunk_overrides() if domain else None
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -114,7 +139,19 @@ def chunk_documents(
         if _is_code_doc(meta):
             documents.append(Document(page_content=content.strip(), metadata=parent_meta))
         else:
-            active_splitter = lcd_splitter if _is_mcd_doc(meta) else splitter
+            use_large = _uses_large_chunk_splitter(meta, domain)
+            if use_large and overrides and meta.get("source") in overrides:
+                src_overrides = overrides[meta["source"]]
+                size = src_overrides.get("chunk_size", lcd_chunk_size)
+                overlap = src_overrides.get("chunk_overlap", lcd_chunk_overlap)
+                active_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=size,
+                    chunk_overlap=overlap,
+                    length_function=len,
+                    separators=["\n\n", "\n", ". ", " ", ""],
+                )
+            else:
+                active_splitter = lcd_splitter if use_large else splitter
             chunks = active_splitter.split_text(content)
             for i, chunk in enumerate(chunks):
                 chunk_meta = dict(parent_meta)
@@ -133,6 +170,7 @@ def chunk_documents(
             max_topic_summary_sentences=MAX_TOPIC_SUMMARY_SENTENCES,
             min_topic_chunks=MIN_TOPIC_CLUSTER_CHUNKS,
             min_doc_text_length=MIN_DOC_TEXT_LENGTH_FOR_SUMMARY,
+            domain_name=domain_name or (domain.name if domain else None),
         )
         documents = tagged + summaries
         logger.info(

@@ -116,3 +116,6 @@ class AutoInsuranceDomain(InsuranceDomain):
         from insurance_rag.domains.auto.patterns import QUICK_QUESTIONS
 
         return QUICK_QUESTIONS
+
+    def get_specialized_source_filter(self) -> dict[str, str] | None:
+        return {"source": "regulations"}

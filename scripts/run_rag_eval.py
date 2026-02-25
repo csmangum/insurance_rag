@@ -161,7 +161,9 @@ def main() -> int:
         if store._collection.count() == 0:
             logger.error("Collection %s is empty. Run ingestion first.", collection_name)
             return 1
-        retriever = get_retriever(k=args.k, store=store)
+        retriever = get_retriever(
+            k=args.k, store=store, embeddings=embeddings, domain_name=domain
+        )
     except Exception as e:
         logger.error("Failed to load index/retriever: %s", e)
         return 1
@@ -180,7 +182,9 @@ def main() -> int:
     # Build RAG chain once before loop to avoid reloading LLM for every question
     from insurance_rag.query.chain import build_rag_chain
     try:
-        rag_chain = build_rag_chain(retriever=retriever, k=args.k)
+        rag_chain = build_rag_chain(
+            retriever=retriever, k=args.k, domain_name=domain
+        )
     except Exception as e:
         logger.error("Failed to build RAG chain: %s", e)
         rag_chain = None

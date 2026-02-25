@@ -65,10 +65,15 @@ def _run_hybrid_search(
     query: str,
     k: int,
     metadata_filter: dict | None,
+    domain_name: str,
 ) -> list[Any]:
     """Run retrieval via get_retriever (Hybrid or LCDAware)."""
     retriever = get_retriever(
-        k=k, metadata_filter=metadata_filter, embeddings=embeddings, store=store
+        k=k,
+        metadata_filter=metadata_filter,
+        embeddings=embeddings,
+        store=store,
+        domain_name=domain_name,
     )
     return retriever.invoke(query)
 
@@ -451,7 +456,9 @@ def main() -> None:
                 if search_mode == _MODE_HYBRID:
                     with st.spinner("Searching (hybrid semantic + keyword)..."):
                         t0 = time.perf_counter()
-                        docs = _run_hybrid_search(store, embeddings, query, k, metadata_filter)
+                        docs = _run_hybrid_search(
+                            store, embeddings, query, k, metadata_filter, domain_name
+                        )
                         elapsed = time.perf_counter() - t0
 
                     st.markdown(f"**{len(docs)}** results in **{elapsed:.3f}s**")
@@ -530,6 +537,9 @@ def main() -> None:
                                 retriever=None,
                                 k=k,
                                 metadata_filter=metadata_filter,
+                                domain_name=domain_name,
+                                store=store,
+                                embeddings=embeddings,
                             )
                             elapsed = time.perf_counter() - t0
                         st.session_state.rag_result = (answer, source_docs, elapsed)

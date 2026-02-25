@@ -57,7 +57,7 @@ python scripts/ingest_all.py [--source iom|mcd|codes|all] [--force] [--skip-extr
 - **Extract:** PDFs (pdfplumber; optional `unstructured` for image-heavy PDFs), MCD/codes from structured files. HCPCS and ICD-10-CM documents are automatically enriched with category labels, synonyms, and related terms (e.g., E-codes get "Durable Medical Equipment: wheelchair, hospital bed, oxygen equipment...") to improve semantic retrieval.
 - **Chunk:** LangChain text splitters; MCD/LCD documents use larger chunks (`LCD_CHUNK_SIZE=1500`) to preserve policy context. Metadata (source, manual, jurisdiction, etc.) is preserved.
 - **Topic summaries:** By default, document-level and topic-cluster summaries are generated (extractive, no LLM needed) and indexed alongside regular chunks. These act as stable retrieval anchors for fragmented topics. Disable with `--no-summaries`.
-- **Embed & store:** sentence-transformers (default `all-MiniLM-L6-v2`) and ChromaDB at `data/chroma/` (collection `insurance_rag`). Only new or changed chunks (by content hash) are re-embedded and upserted.
+- **Embed & store:** sentence-transformers (default `all-MiniLM-L6-v2`) and ChromaDB at `data/chroma/` (per-domain collection, e.g. `medicare`, `auto_insurance`). Only new or changed chunks (by content hash) are re-embedded and upserted.
 - Use `--skip-extract` to skip extraction and only run chunking on existing processed files.
 - Use `--skip-index` to run only extract and chunk (no embedding or vector store).
 

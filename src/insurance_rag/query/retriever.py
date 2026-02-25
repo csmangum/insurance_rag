@@ -25,28 +25,33 @@ from insurance_rag.index.store import get_raw_collection
 logger = logging.getLogger(__name__)
 
 
-def _get_domain_query_patterns() -> dict[str, Any]:
-    """Load specialized query patterns from the active domain."""
-    try:
+def _get_domain_query_patterns(domain_name: str | None = None) -> dict[str, Any]:
+    """Load specialized query patterns from the given domain (or default)."""
+    if domain_name is None:
         from insurance_rag.config import DEFAULT_DOMAIN
+
+        domain_name = DEFAULT_DOMAIN
+    try:
         from insurance_rag.domains import get_domain
 
-        return get_domain(DEFAULT_DOMAIN).get_query_patterns()
+        return get_domain(domain_name).get_query_patterns()
     except (KeyError, ImportError):
         return {}
 
 
-def is_lcd_query(query: str) -> bool:
-    """Return True if the query matches the active domain's specialized query patterns.
+def is_lcd_query(query: str, domain_name: str | None = None) -> bool:
+    """Return True if the query matches the domain's specialized query patterns.
 
     For Medicare, this detects LCD/coverage-determination queries.
     Kept as ``is_lcd_query`` for backward compatibility.
     """
-    patterns = _get_domain_query_patterns().get("specialized_query_patterns", [])
+    patterns = _get_domain_query_patterns(domain_name).get(
+        "specialized_query_patterns", []
+    )
     return any(p.search(query) for p in patterns)
 
 
-def expand_lcd_query(query: str) -> list[str]:
+def expand_lcd_query(query: str, domain_name: str | None = None) -> list[str]:
     """Return a list of expanded/reformulated queries for specialized retrieval.
 
     Produces up to three variants:
@@ -55,7 +60,7 @@ def expand_lcd_query(query: str) -> list[str]:
       3. A stripped concept query (domain jargon removed) so the embedding
          focuses on the core topic.
     """
-    domain_patterns = _get_domain_query_patterns()
+    domain_patterns = _get_domain_query_patterns(domain_name)
     topic_patterns = domain_patterns.get("specialized_topic_patterns", [])
     strip_noise = domain_patterns.get("strip_noise_pattern")
     strip_filler = domain_patterns.get("strip_filler_pattern")
@@ -78,9 +83,9 @@ def expand_lcd_query(query: str) -> list[str]:
     return queries
 
 
-def _strip_to_medical_concept(query: str) -> str:
+def _strip_to_medical_concept(query: str, domain_name: str | None = None) -> str:
     """Backward-compatible wrapper for _strip_to_concept using domain patterns."""
-    patterns = _get_domain_query_patterns()
+    patterns = _get_domain_query_patterns(domain_name)
     return _strip_to_concept(
         query,
         patterns.get("strip_noise_pattern"),
@@ -104,11 +109,16 @@ def _strip_to_concept(
     return cleaned
 
 
-def detect_query_topics(query: str) -> list[str]:
+def detect_query_topics(
+    query: str, domain_name: str | None = None
+) -> list[str]:
     """Return the list of topic cluster names relevant to the query."""
     from insurance_rag.ingest.cluster import assign_topics
 
-    return assign_topics(Document(page_content=query, metadata={}))
+    return assign_topics(
+        Document(page_content=query, metadata={}),
+        domain_name=domain_name,
+    )
 
 
 def boost_summaries(
@@ -197,10 +207,11 @@ def apply_topic_summary_boost(
     docs: list[Document],
     query: str,
     max_k: int,
+    domain_name: str | None = None,
 ) -> list[Document]:
     """Run topic detection, inject topic summaries if needed, boost them,
     return up to max_k docs."""
-    query_topics = detect_query_topics(query)
+    query_topics = detect_query_topics(query, domain_name=domain_name)
     if query_topics:
         docs = inject_topic_summaries(store, docs, query_topics, max_k)
         docs = boost_summaries(docs, query_topics, max_k)
@@ -248,6 +259,7 @@ class LCDAwareRetriever(BaseRetriever):
     k: int = 8
     lcd_k: int = LCD_RETRIEVAL_K
     metadata_filter: dict | None = None
+    domain_name: str | None = None
 
     def _get_relevant_documents(
         self,
@@ -255,50 +267,66 @@ class LCDAwareRetriever(BaseRetriever):
         *,
         run_manager: CallbackManagerForRetrieverRun,
     ) -> list[Document]:
-        if is_lcd_query(query):
+        if is_lcd_query(query, self.domain_name):
             return self._lcd_retrieve(query)
         search_kwargs: dict = {"k": self.k}
         if self.metadata_filter is not None:
             search_kwargs["filter"] = self.metadata_filter
         docs = self.store.similarity_search(query, **search_kwargs)
-        docs = apply_topic_summary_boost(self.store, docs, query, self.k)
+        docs = apply_topic_summary_boost(
+            self.store, docs, query, self.k, domain_name=self.domain_name
+        )
         return docs
 
     def _lcd_retrieve(self, query: str) -> list[Document]:
-        if (
-            self.metadata_filter is not None
-            and self.metadata_filter.get("source") not in (None, "mcd")
-        ):
-            search_kwargs = {"k": self.k, "filter": self.metadata_filter}
-            return self.store.similarity_search(query, **search_kwargs)
+        spec_filter = None
+        if self.domain_name:
+            from insurance_rag.domains import get_domain
 
-        mcd_filter = {"source": "mcd"}
+            spec_filter = get_domain(self.domain_name).get_specialized_source_filter()
+
+        if spec_filter and self.metadata_filter is not None:
+            req_source = spec_filter.get("source")
+            if req_source and self.metadata_filter.get("source") not in (
+                None,
+                req_source,
+            ):
+                search_kwargs = {"k": self.k, "filter": self.metadata_filter}
+                return self.store.similarity_search(query, **search_kwargs)
+
+        source_filter = spec_filter or {}
         if self.metadata_filter is not None:
-            mcd_filter = {**self.metadata_filter, "source": "mcd"}
+            source_filter = {**self.metadata_filter, **source_filter}
 
         per_variant = max(4, self.lcd_k // 3)
 
-        mcd_docs = self.store.similarity_search(
-            query, k=per_variant, filter=mcd_filter
-        )
-
-        expanded_queries = expand_lcd_query(query)
-        variant_results: list[list[Document]] = []
-        for eq in expanded_queries[1:]:
-            variant_results.append(
-                self.store.similarity_search(
-                    eq, k=per_variant, filter=mcd_filter,
-                )
+        if source_filter:
+            spec_docs = self.store.similarity_search(
+                query, k=per_variant, filter=source_filter
             )
+            expanded_queries = expand_lcd_query(query, self.domain_name)
+            variant_results: list[list[Document]] = []
+            for eq in expanded_queries[1:]:
+                variant_results.append(
+                    self.store.similarity_search(
+                        eq, k=per_variant, filter=source_filter,
+                    )
+                )
+        else:
+            spec_docs = []
+            expanded_queries = expand_lcd_query(query, self.domain_name)
+            variant_results = []
 
         base_kwargs: dict = {"k": per_variant}
         if self.metadata_filter is not None:
             base_kwargs["filter"] = self.metadata_filter
         base_docs = self.store.similarity_search(query, **base_kwargs)
 
-        doc_lists = [mcd_docs] + variant_results + [base_docs]
+        doc_lists = [spec_docs] + variant_results + [base_docs]
         merged = _deduplicate_docs(doc_lists, max_k=self.lcd_k)
-        merged = apply_topic_summary_boost(self.store, merged, query, self.lcd_k)
+        merged = apply_topic_summary_boost(
+            self.store, merged, query, self.lcd_k, domain_name=self.domain_name
+        )
         return merged
 
 
@@ -307,6 +335,7 @@ def get_retriever(
     metadata_filter: dict | None = None,
     embeddings: Any = None,
     store: Any = None,
+    domain_name: str | None = None,
 ) -> BaseRetriever:
     """Return a hybrid retriever combining semantic and keyword search.
 
@@ -317,7 +346,11 @@ def get_retriever(
         from insurance_rag.query.hybrid import get_hybrid_retriever
 
         return get_hybrid_retriever(
-            k=k, metadata_filter=metadata_filter, embeddings=embeddings, store=store
+            k=k,
+            metadata_filter=metadata_filter,
+            embeddings=embeddings,
+            store=store,
+            domain_name=domain_name,
         )
     except ImportError:
         pass
@@ -325,10 +358,16 @@ def get_retriever(
     if embeddings is None:
         embeddings = get_embeddings()
     if store is None:
-        store = get_or_create_chroma(embeddings)
+        coll = None
+        if domain_name:
+            from insurance_rag.domains import get_domain
+
+            coll = get_domain(domain_name).collection_name
+        store = get_or_create_chroma(embeddings, collection_name=coll)
     return LCDAwareRetriever(
         store=store,
         k=k,
         lcd_k=max(k, LCD_RETRIEVAL_K),
         metadata_filter=metadata_filter,
+        domain_name=domain_name,
     )

@@ -40,16 +40,16 @@ def _compile(raw: list[str]) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(p, re.IGNORECASE) for p in raw)
 
 
-def _load_topic_definitions() -> list[TopicDef]:
-    """Load topic definitions from the active domain, DATA_DIR, or package default."""
+def _load_topic_definitions(domain_name: str | None = None) -> list[TopicDef]:
+    """Load topic definitions from the given domain, DATA_DIR, or package default."""
     raw: str | None = None
 
-    # 1. Try the active domain's topic definitions
+    # 1. Try the domain's topic definitions
     try:
         from insurance_rag.config import DEFAULT_DOMAIN
         from insurance_rag.domains import get_domain
 
-        domain = get_domain(DEFAULT_DOMAIN)
+        domain = get_domain(domain_name or DEFAULT_DOMAIN)
         domain_path = domain.get_topic_definitions_path()
         if domain_path.exists():
             raw = domain_path.read_text(encoding="utf-8")
@@ -97,22 +97,38 @@ def _load_topic_definitions() -> list[TopicDef]:
     return out
 
 
-TOPIC_DEFINITIONS: list[TopicDef] = _load_topic_definitions()
-_TOPIC_DEF_MAP: dict[str, TopicDef] = {td.name: td for td in TOPIC_DEFINITIONS}
+_TOPIC_DEF_CACHE: dict[str, list[TopicDef]] = {}
 
 
-def assign_topics(doc: Document) -> list[str]:
+def _get_topic_definitions(domain_name: str | None = None) -> list[TopicDef]:
+    """Return topic definitions for the given domain (cached per domain)."""
+    key = domain_name or "__default__"
+    if key not in _TOPIC_DEF_CACHE:
+        _TOPIC_DEF_CACHE[key] = _load_topic_definitions(domain_name)
+    return _TOPIC_DEF_CACHE[key]
+
+
+# Default topic definitions (for backward compatibility)
+TOPIC_DEFINITIONS: list[TopicDef] = _get_topic_definitions()
+
+
+def assign_topics(
+    doc: Document, domain_name: str | None = None
+) -> list[str]:
     """Return the list of topic names that match the document content."""
+    topic_defs = _get_topic_definitions(domain_name)
     text = doc.page_content
     topics: list[str] = []
-    for topic_def in TOPIC_DEFINITIONS:
+    for topic_def in topic_defs:
         matches = sum(1 for p in topic_def.patterns if p.search(text))
         if matches >= topic_def.min_pattern_matches:
             topics.append(topic_def.name)
     return topics
 
 
-def cluster_documents(documents: list[Document]) -> dict[str, list[Document]]:
+def cluster_documents(
+    documents: list[Document], domain_name: str | None = None
+) -> dict[str, list[Document]]:
     """Group documents by topic cluster.
 
     Returns a mapping from topic name to the list of documents that
@@ -120,25 +136,30 @@ def cluster_documents(documents: list[Document]) -> dict[str, list[Document]]:
     """
     clusters: dict[str, list[Document]] = {}
     for doc in documents:
-        topics = assign_topics(doc)
+        topics = assign_topics(doc, domain_name=domain_name)
         for topic in topics:
             clusters.setdefault(topic, []).append(doc)
     return clusters
 
 
-def get_topic_def(name: str) -> TopicDef | None:
+def get_topic_def(
+    name: str, domain_name: str | None = None
+) -> TopicDef | None:
     """Look up a topic definition by name."""
-    return _TOPIC_DEF_MAP.get(name)
+    defs = _get_topic_definitions(domain_name)
+    return next((td for td in defs if td.name == name), None)
 
 
-def tag_documents_with_topics(documents: list[Document]) -> list[Document]:
+def tag_documents_with_topics(
+    documents: list[Document], domain_name: str | None = None
+) -> list[Document]:
     """Add ``topic_clusters`` metadata to each document.
 
     Returns new Document instances (original list is not mutated).
     """
     tagged: list[Document] = []
     for doc in documents:
-        topics = assign_topics(doc)
+        topics = assign_topics(doc, domain_name=domain_name)
         if topics:
             meta = dict(doc.metadata)
             meta["topic_clusters"] = ",".join(topics)

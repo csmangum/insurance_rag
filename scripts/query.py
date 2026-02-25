@@ -108,9 +108,17 @@ def main() -> int:
     print(f"{domain.display_name} RAG query (blank line to quit)")
     print("---")
 
+    from insurance_rag.index import get_embeddings, get_or_create_chroma
+
+    embeddings = get_embeddings()
+    store = get_or_create_chroma(embeddings, collection_name=domain.collection_name)
+
     chain = build_rag_chain(
         k=args.k,
         metadata_filter=metadata_filter,
+        domain_name=args.domain,
+        store=store,
+        embeddings=embeddings,
         system_prompt=domain.get_system_prompt(),
     )
 

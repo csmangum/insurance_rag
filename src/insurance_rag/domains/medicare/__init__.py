@@ -117,3 +117,6 @@ class MedicareDomain(InsuranceDomain):
         from insurance_rag.domains.medicare.patterns import QUICK_QUESTIONS
 
         return QUICK_QUESTIONS
+
+    def get_specialized_source_filter(self) -> dict[str, str] | None:
+        return {"source": "mcd"}

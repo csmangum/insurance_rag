@@ -130,6 +130,13 @@ class TestInsuranceDomainInterface:
         assert len(questions) > 0
         assert all(isinstance(q, str) for q in questions)
 
+    def test_get_specialized_source_filter(self, domain: InsuranceDomain):
+        result = domain.get_specialized_source_filter()
+        if result is not None:
+            assert isinstance(result, dict)
+            assert "source" in result
+            assert result["source"] in domain.source_kinds
+
 
 class TestMedicareDomain:
     """Medicare-specific domain tests."""
